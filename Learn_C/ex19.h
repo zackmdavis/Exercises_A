@@ -4,7 +4,7 @@
 #include "object.h"
 
 struct Monster {
-  Object prot;
+  Object proto;
   int hit_points;
 };
 
@@ -36,7 +36,7 @@ struct Map {
   Room *location;
 };
 
-typedef Map Map;
+typedef struct Map Map;
 
 void *Map_move(void *self, Direction direction);
 int Map_attack(void *self, int damage);

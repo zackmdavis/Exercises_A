@@ -36,6 +36,7 @@ void *Object_move(void *self, Direction direction)
 int Object_attack(void *self, int damage)
 {
   printf("You can't attack that.\n");
+  return 0;
 }
 
 void *Object_new(size_t size, Object proto, char *description)
