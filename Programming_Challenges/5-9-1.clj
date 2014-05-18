@@ -17,15 +17,16 @@
   (let [total (+ (reduce + digits) carry)]
     [(mod total 10) (quot total 10)]))
 
-;;;; I am bad at programming
-;; (defn carries [summands]
-;;   (let [places (max (map #(count (str %)) summands))
-;;         digit_streams (map #(zero-padding (digits %) places) summands)]
-;;     (count (filter #(not zero? 5)
-;;                    (map second
-;;                         (reductions schoolbook [0 0]
-;;                                     digit_streams))))))
+(defn standardize_arguments [args]
+  (let [places (apply max (map #(count (str %)) args))]
+    (map #(zero-padding (digits %) places) args)))
 
+(defn carries [summands]
+  (let [digit_streams (standardize_arguments summands)]
+    (count (filter #(not (zero? %))
+                   (map second
+                        (reductions schoolbook [0 0]
+                                    (apply zip digit_streams)))))))
 
 (deftest test_known_digits
   (is (= [3 1 4 1 5 9 2] (digits 2951413))))
@@ -33,9 +34,14 @@
 (deftest test_zero-padding
   (is (= [2 3 5 0 0 0] (zero-padding [2 3 5] 6))))
 
+(deftest test_standardize_arguments
+  (is (= [[3 2 1 0 0] [8 7 6 5 4]]
+         (standardize_arguments [123 45678]))))
+
 (deftest test_sample_output
   (is (= 0 (carries [123 456])))
   (is (= 3 (carries [555 555])))
-  (is (= 1 (carries [123 594]))))
-
+  (is (= 1 (carries [123 594])))
+  (is (= 4 (carries [92445 85555]))))
+ 
 (run-tests)
