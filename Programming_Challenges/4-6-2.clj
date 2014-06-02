@@ -15,12 +15,23 @@
           (for [cake stack]
             [cake (.indexOf stack cake)]))))
 
+(defn pivot_j_to_k [stack j k]
+  (flip (flip stack j) k))
+
 (defn pivot_to_first [stack j]
   (flip (flip stack j) 0))
 
+;; XXX TODO FIXME this does not work
 (defn flapjack_sort [stack]
-  ;; TODO
-)
+  (let [destiny (sort stack)]
+    (loop [current stack
+           prophecies destiny]
+      (if (seq prophecies)
+        current
+        (recur (pivot_j_to_k current (.indexOf current
+                                               (first prophecies))
+                             (- (count prophecies) (count current)))
+               (rest prophecies))))))
 
 (deftest test_can_flip
   (is (= (flip [0 1 2 3 4] 2)
@@ -35,7 +46,8 @@
              pivot)))))
 
 (deftest test_flapjack_sort
-  ;; TODO
-)
+  (doseq [_ (range 15)]
+    (let [stack (vec (repeatedly 8 #(rand-int 15)))]
+      (is (= (sort stack) (flapjack_sort stack))))))
 
 (run-tests)
