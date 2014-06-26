@@ -12,13 +12,19 @@
     (vec (map (fn [x] :O) row)))))
 
 (defn color_at_point [canvas x y color]
-  (map-indexed  ; I feel like there must be a better way
-   (fn [index row]
-     (if (= index y)
-       (assoc (canvas y) x color)
-       row))
-   canvas))
+  (assoc canvas y (assoc (canvas y) x color)))
 
 (defn hit_pixel [x y color] ; returns function to be `swap!`ed
   (fn [canvas]
     (color_at_point canvas x y color)))
+
+(defn issue [workspace command]
+  (let [opcode (first command)
+        arguments (rest command)]
+    (swap! workspace (action opcode arguments))))
+
+(def operations {})
+
+(defn action [opcode arguments]
+  (fn [canvas]
+    (apply (operations opcode) (concat [canvas] arguments))))
