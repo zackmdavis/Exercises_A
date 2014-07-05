@@ -53,21 +53,21 @@
   (mutate_register! machine r (fn [x] (m* x n))))
 
 (defn set_register_to_register! [machine destination source]
-  (mutate_register! machine destination (lookup_register machine source)))
+  (mutate_register! machine destination (lookup_register @machine source)))
 
 (defn add_register_to_register! [machine destination source]
-  (add_to_register! machine destination (lookup_register machine source)))
+  (add_to_register! machine destination (lookup_register @machine source)))
 
 (defn multiply_register_to_register! [machine destination source]
-  (multiply_to_register! machine destination (lookup_register machine source)))
+  (multiply_to_register! machine destination (lookup_register @machine source)))
 
 (defn set_register_from_address! [machine r pointer]
-  (set_register! machine r (lookup_memory machine
-                                      (lookup_register machine pointer))))
+  (set_register! machine r (lookup_memory @machine
+                                      (lookup_register @machine pointer))))
 
 (defn set_memory_from_register! [machine pointer source]
-  (mutate_memory! machine (lookup_register pointer)
-                  (fn [_] (lookup_register source))))
+  (mutate_memory! machine (lookup_register @pointer)
+                  (fn [_] (lookup_register @source))))
 
 (defn halt! [machine]
   (swap! machine
@@ -85,7 +85,7 @@
   (Math/pow a b))
 
 (defn digit [word i]
-  (mod (quot word (expt 10 i)) 10))
+  (int (mod (quot word (expt 10 i)) 10)))
 
 (defn tick! [machine]
   (swap! machine
@@ -94,7 +94,7 @@
                    state [:current :clock]))))
 
 (defn operation [instruction]
-  (condp #(digit % 2) instruction
+  (condp (fn [high_digit opcode] (= high_digit (digit opcode 2))) instruction
     1 halt!
     ;; TODO: macro maybe??
     2 #(set_register! % (digit instruction 1) (digit instruction 0))
@@ -143,6 +143,13 @@
     (initialize_memory! test_machine [1 2 3 4 5])
     (is (= (take 5 (@test_machine :memory)) [1 2 3 4 5]))
     (is (every? zero? (drop 5 (@test_machine :memory))))))
+
+;; XXX TODO FIXME
+(deftest test_set_register_to_register
+  (let [test_machine (clean_machine)]
+    (set_register! test_machine 0 21)
+    (set_register_to_register! test_machine 1 0)
+    (is (= (lookup_register @test_machine 1) 21))))
 
 ;;; XXX TODO FIXME not done debugging the entire program
 (deftest test_sample_output
