@@ -7,14 +7,20 @@
    [ :9 :10 :11 :12]
    [:13 :14 :15 nil]])
 
-(defn coordinates-of-void [state]
+(defn coordinates-of-k [state k]
   (let [i (first (keep-indexed
-                  (fn [i row] (if (= (count (filter identity row)) 3) i))
-                  state))
+                  (fn [i row]
+                    (if (= (count (filter #(not= k %) row))
+                           (dec (count state)))
+                      i)) ; my whitespace around here
+                  state)) ; is kind of awful somehow
         j (first (keep-indexed
-                  (fn [j tile] (if-not tile j))
+                  (fn [j tile] (if (= tile k) j))
                   (state i)))]
     [i j]))
+
+(defn coordinates-of-void [state]
+  (coordinates-of-k state nil))
 
 ;; I feel like I write this function way too often
 (defn lookup [state coordinates]
@@ -30,7 +36,7 @@
 
 ;; how do we endure the hegemony of two-dimensional grids?
 (defn in-bounds? [coordinates]
-  (every? #(< % 4) coordinates))
+  (every? #(<= 0 % 3) coordinates))
 
 (defn slide [state direction]
   (let [void-place (coordinates-of-void state)
@@ -40,6 +46,18 @@
       (write (write state void-place replacement) replace-place nil)
       state)))
 
+(defn optimism [dream reality]
+  (count (filter identity
+                 (for [tile (flatten dream)]
+                   (not= (coordinates-of-k dream tile)
+                         (coordinates-of-k reality tile))))))
+
+(def directions [[0 -1] [0 1] [-1 0] [1 0]])
+
+(defn nearby-possible-worlds [state]
+  (filter #(and (not= state %) (in-bounds? %))
+          (for [direction directions]
+            (slide state direction))))
 
 (deftest can-find-coordinates-of-void
   (is (= [3 3] (coordinates-of-void goal-state))))
@@ -50,5 +68,9 @@
           [ :9 :10 :11 :12]
           [:13 :14 nil :15]]
          (slide goal-state [0 -1]))))
+
+(deftest test-optimism
+  (is (= 2
+         (optimism [[:1 :2] [:3 nil]] [[:2 :1] [:3 nil]]))))
 
 (run-tests)
