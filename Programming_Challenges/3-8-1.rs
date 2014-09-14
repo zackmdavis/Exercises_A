@@ -1,28 +1,22 @@
-use std::hashmap::HashMap;
+use std::collections::hashmap::HashMap;
 
-fn erroneous_typing(intended: ~str) -> ~str {
-    let top_row = ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '[', ']'];
-    let home_row = ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', '\''];
-    let bottom_row = ['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', '/'];
+fn erroneous_typing(intended: String) -> String {
+    let top_row = vec!['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '[', ']'];
+    let home_row = vec!['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', '\''];
+    let bottom_row = vec!['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', '/'];
+    let spacebar = vec![' ', ' '];
 
     let mut keymap = HashMap::new();
 
-    // this is awful but I don't really understand Rust's type
-    // system and don't know how to iterate over a vector of vectors
-    for i in range(0, top_row.len()-1) {
-        keymap.insert(top_row[i+1], top_row[i]);
-    }
-    for i in range(0, home_row.len()-1) {
-        keymap.insert(home_row[i+1], home_row[i]);
-    }
-    for i in range(0, bottom_row.len()-1) {
-        keymap.insert(bottom_row[i+1], bottom_row[i]);
+    let rows = [&top_row, &home_row, &bottom_row, &spacebar];
+    for row in rows.iter() {
+        for i in range(0, row.len()-1) {
+            keymap.insert(*row.get(i+1), *row.get(i));
+        }
     }
 
-    keymap.insert(' ', ' ');
-
-    let mut written = ~"";
-    for c in intended.chars() {
+    let mut written: String = "".to_string();
+    for c in intended.as_slice().chars() {
         written.push_char(*keymap.get(&c));
     }
     written
@@ -31,7 +25,7 @@ fn erroneous_typing(intended: ~str) -> ~str {
 
 #[test]
 fn test_sample_output() {
-    let result: ~str = erroneous_typing(~"O S, GOMR YPFSU/");
+    let result: String = erroneous_typing("O S, GOMR YPFSU/".to_string());
     println!("{}", result);
-    assert!(result == ~"I AM FINE TODAY.");
+    assert!(result == "I AM FINE TODAY.".to_string());
 }
