@@ -35,15 +35,15 @@
   (vec (map + coordinates direction)))
 
 ;; how do we endure the hegemony of two-dimensional grids?
-(defn in-bounds? [coordinates]
-  (every? #(<= 0 % 3) coordinates))
+(defn in-bounds? [coordinates bound]
+  (every? #(<= 0 % bound) coordinates))
 
 (defn slide [state direction]
   (let [void-place (coordinates-of-void state)
-        replace-place (displace void-place direction)
-        replacement (lookup state replace-place)]
-    (if (in-bounds? replace-place)
-      (write (write state void-place replacement) replace-place nil)
+        replace-place (displace void-place direction)]
+    (if (in-bounds? replace-place (dec (count state)))
+      (let [replacement (lookup state replace-place)]
+        (write (write state void-place replacement) replace-place nil))
       state)))
 
 (defn optimism [dream reality]
@@ -55,9 +55,13 @@
 (def directions [[0 -1] [0 1] [-1 0] [1 0]])
 
 (defn nearby-possible-worlds [state]
-  (filter #(and (not= state %) (in-bounds? %))
+  (filter #(not= state %)
           (for [direction directions]
             (slide state direction))))
+
+(defn endeavor []
+  ;; TODO
+)
 
 (deftest can-find-coordinates-of-void
   (is (= [3 3] (coordinates-of-void goal-state))))
@@ -69,8 +73,28 @@
           [:13 :14 nil :15]]
          (slide goal-state [0 -1]))))
 
+(deftest cannot-slide-out-of-bounds
+  (is (= goal-state
+         (slide goal-state [0 1]))))
+
 (deftest test-optimism
   (is (= 2
          (optimism [[:1 :2] [:3 nil]] [[:2 :1] [:3 nil]]))))
+
+(deftest test-nearby-possible-worlds
+  (is (= #{[[:1  nil]
+           [:3  :2 ]]
+          [[:1  :2 ]
+           [nil :3 ]]}
+         (set (nearby-possible-worlds [[:1 :2 ]
+                                       [:3 nil]])))))
+
+;; TODO
+(deftest test-sample-output
+  (is (endeavor [[ :2  :3  :4 nil]
+                 [ :1  :5  :7  :8]
+                 [ :9  :6 :10 :12]
+                 [:13 :14 :11 :15]])
+      [[0 -1] [0 -1] [0 -1] [1 0] [0 1] [1 0] [0 1] [1 0] [0 1]]))
 
 (run-tests)
