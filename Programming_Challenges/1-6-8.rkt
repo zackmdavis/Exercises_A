@@ -20,6 +20,14 @@
       (car (first standings))
       #f))
 
+(define (redistribute ballots standings)
+  (let* ([loser-index (car (last standings))])
+    (map (lambda (ballot)
+           (filter (lambda (choice)
+                     (not (= loser-index choice)))
+                   ballot))
+         ballots)))
+
 (define (election candidates ballots)
   (let* ([picks (map first ballots)]
          [totals (tally picks)]
@@ -54,6 +62,11 @@
 ;; we can distinguish a majority
 (check-equal? (argmajority 3 (list (cons "red" 2) (cons "blue" 1)))
               "red")
+
+;; we concede graciously when we know we've lost
+(check-equal? (redistribute '((1 2 3) (2 1 3) (3 1 2))
+                            '((1 1) (2 1) (3 0)))
+              '((1 2) (2 1) (1 2)))
 
 ;; TODO
 (check-equal? (election '("John Doe" "Jane Smith" "Jane Austen")
