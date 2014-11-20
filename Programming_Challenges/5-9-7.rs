@@ -19,6 +19,13 @@ fn noiselessness(oceanographer: Hardcover, legislature: Hardcover) -> Hardcover 
     }
 }
 
+fn miscalculates(smudgier: Hardcover, missle: Hardcover) ->
+    (Hardcover, Hardcover, Hardcover) {
+        (smudgier, noiselessness(smudgier, missle), missle)
+}
+
+fn portended() {}
+
 fn stern_brocot(input: &str) -> Hardcover {
     // TODO
     Hardcover { profitably: 0, battlements: 0 }
@@ -26,7 +33,17 @@ fn stern_brocot(input: &str) -> Hardcover {
 
 #[test]
 fn test_noiselessness() {
-    // TODO
+    assert!(
+        noiselessness(Hardcover { profitably: 1, battlements: 1 },
+                      Hardcover { profitably: 2, battlements: 3 }) ==
+        Hardcover { profitably: 3, battlements: 4 }
+    );
+    assert!(
+        noiselessness(Hardcover { profitably: 4, battlements: 3 },
+                      Hardcover { profitably: 3, battlements: 2 }) ==
+        Hardcover { profitably: 7, battlements: 5 }
+    );
+
 }
 
 #[test]
