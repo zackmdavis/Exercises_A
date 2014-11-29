@@ -1,2 +1,5 @@
 *.o
 *.dat
+
+*.pyc
+__pycache__/
