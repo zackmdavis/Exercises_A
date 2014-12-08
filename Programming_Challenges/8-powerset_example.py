@@ -4,8 +4,6 @@ backtracking_lib = __import__('8-backtracking')
 globals()['backtrack'] = backtracking_lib.backtrack
 globals()['FINISHED'] = backtracking_lib.FINISHED
 
-FINISHED = False
-
 def is_solution(candidate, step, data_input):
     return step >= (data_input - 1)
 
@@ -20,7 +18,6 @@ def construct_possible_nexts(candidate, step, data_input):
 SOLUTIONS = set()
 
 def process_solution(candidate, step, data_input):
-    global SOLUTIONS
     SOLUTIONS.add(
         frozenset({i for i, present in enumerate(candidate) if present})
     )
