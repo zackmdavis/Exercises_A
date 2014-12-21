@@ -43,6 +43,27 @@ def little_bishops(arena_size, bishop_count, time_debug=False):
     return len(possible_worlds)
 
 
+def textbook_bishops(arena_size, bishop_count):
+    the_positions = positions(arena_size)
+    allowable_positionings = 0
+
+    def bishop_explorer(state_of_play, total_to_place):
+        if len(state_of_play) == total_to_place:
+            nonlocal allowable_positionings
+            allowable_positionings += 1
+        else:
+            latest_bishop = state_of_play[-1] if state_of_play else None
+            index_of_latest = (state_of_play.index(latest_bishop)
+                               if latest_bishop else 0)
+            freespace = the_positions[index_of_latest+1:]
+            for space in freespace:
+                if allowable(state_of_play, space):
+                    bishop_explorer(state_of_play + [space], total_to_place)
+
+    bishop_explorer([], bishop_count)
+    return allowable_positionings
+
+
 import unittest
 
 class LittleBishopsTestCase(unittest.TestCase):
@@ -79,6 +100,19 @@ class LittleBishopsTestCase(unittest.TestCase):
         # the current code doing that (presumably) it doesn't have
         # to??
         self.assertEqual(little_bishops(8, 6, time_debug=True), 5599888)
+
+
+class TextbookBishopsTestCase(unittest.TestCase):
+
+    @unittest.expectedFailure
+    def test_the_sample_output(self):
+        self.assertEqual(textbook_bishops(2, 2), 4)
+        # AssertionError: 3450 != 260
+        self.assertEqual(textbook_bishops(4, 4), 260)
+
+    @unittest.skip("still too slow, dummy")
+    def test_the_sample_output_aggressively(self):
+        self.assertEqual(textbook_bishops(8, 6), 5599888)
 
 
 if __name__ == "__main__":
