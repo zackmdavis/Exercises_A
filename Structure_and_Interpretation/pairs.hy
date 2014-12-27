@@ -1,13 +1,12 @@
-(defn cons [a b] [a b])
-(defn pair? [thing] (and (isinstance thing list) (= (len thing) 2)))
-
-(defn car [pair] (first thing))
-(defn cdr [pair] (second thing))
+(defn construct-slice [start stop step]
+  ;; workaround thanks to @olasd's Jan. 4 comment on
+  ;; https://github.com/hylang/hy/issues/381
+  ;;
+  ;; (it looks like this was actually fixed upstream in
+  ;; hylang/hy@89cdcc4a, but YOLO)
+  ((get --builtins-- "slice") start stop step))
 
 (defn lispt [elements]
-  "Given a Python-list, return the corresponding Lisp-list (i.e., made from
-cons cells, which actuallly happen to actually be Python-lists in this
-implementation)."
   (if elements
     (cons (first elements) (lispt (rest elements)))
     nil))
@@ -16,6 +15,4 @@ implementation)."
   (assoc pair 0 value))
 
 (defn set-cdr! [pair value]
-  (assoc pair 1 value))
-
-(defn nil? [thing] (is thing nil))
+  (assoc pair (construct-slice 1 None None) value))
