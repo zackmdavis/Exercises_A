@@ -3,6 +3,8 @@
 (import [3_circuit_make_wire [make_wire]])
 (import time)
 
+(require pairs)
+
 (def inverter-delay 2)
 (def and-gate-delay 3)
 (def or-gate-delay 5)
@@ -117,11 +119,6 @@
     (do
      ((pop-from-agenda! agenda))
      (propogate agenda))))
-
-;; inlined here because importing it (by importing *) from pairs.hy
-;; didn't work?!
-(defmacro λ [&rest code]
-  `(lambda ~@code))
 
 (defn probe [name agenda wire]
   (add-action! wire
