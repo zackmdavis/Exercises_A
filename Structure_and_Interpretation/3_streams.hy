@@ -1,5 +1,7 @@
 (import [functools [lru_cache :as memoize]])
 
+(require hy.contrib.anaphoric)
+
 (import [pairs [*]])
 (require pairs)
 
@@ -34,9 +36,11 @@
      (apply procedure (map stream-car streams))
      (apply stream-map (cons procedure (map stream-cdr streams))))))
 
-(defn stream-filter [predicate stream]
-  ;; TODO
-)
+(defn stream-filter [predicate? stream]
+  (let [[next (stream-car stream)]]
+    (if (predicate? next)
+      (cons-stream next (stream-filter predicate? (stream-cdr stream)))
+      (stream-filter predicate? (stream-cdr stream)))))
 
 (defn stream-nth [stream n]
   (if (= n 0)
@@ -53,8 +57,54 @@
   (call-for-each (λ [item] (apply print [item] {"end" " "})) stream)
   (print))
 
+(defn printstream-until [stream n]
+  (if (and stream (> n 0))
+    (do
+     (apply print [(stream-car stream)] {"end" " "})
+     (printstream-until (stream-cdr stream) (dec n)))
+    (print)))
+
 (defn integers-from [n]
   (cons-stream n (integers-from (inc n))))
 
 (def ℕ (integers-from 0))
 (def ℕ+ (integers-from 1))
+
+(defn add-streams [first-stream second-stream]
+  (stream-map (λ [a b] (+ a b)) first-stream second-stream))
+
+(defn scale-stream [stream factor]
+  (stream-map (λ [x] (* factor x)) stream))
+
+(defn multiply-streams [first-stream second-stream]
+  (stream-map (λ [a b] (* a b)) first-stream second-stream))
+
+(defn merge [first-stream second-stream]
+  (cond [(not first-stream) second-stream]
+        [(not second-stream) first-stream]
+        [true ; "else"
+         (let [[first-car (stream-car first-stream)]
+               [second-car (stream-car second-stream)]]
+           (cond [(< first-car second-car)
+                  (cons-stream first-car (merge (stream-cdr first-stream)
+                                                second-stream))]
+                 [(< second-car first-car)
+                  (cons-stream second-car (merge (stream-cdr second-stream)
+                                                 first-stream))]
+                 [true ; "else"
+                  (cons-stream first-car (apply merge
+                                                (list
+                                                 (map stream-cdr
+                                                      [first-stream
+                                                       second-stream]))))]))]))
+
+(defmacro/g! assert-stream-begins! [stream reference-list]
+  `(for [[g!i reference-item] (enumerate ~reference-list)]
+     (assert (= reference-item (stream-nth ~stream g!i)))))
+
+;; Exercise 3.55
+(defn partial-sums [stream]
+  ;; XXX wrong these are squares; you need to understand the problem
+  ;; and not just guess
+  (cons-stream (stream-car stream)
+               (add-streams stream (partial-sums (stream-cdr stream)))))
