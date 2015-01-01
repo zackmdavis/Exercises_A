@@ -20,3 +20,9 @@
 
 (defn set-cdr! [pair value]
   (assoc pair (construct-slice 1 None None) value))
+
+(defn set-global! [name value]
+  (assoc (globals) name value))
+
+(defn get-global [name]
+  (get (globals) name))

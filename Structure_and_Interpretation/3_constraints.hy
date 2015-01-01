@@ -21,13 +21,9 @@
             (cond [(not (self.has-value?))
                    (do (setv value new-value)
                        (setv informant setter)
+                       (print "DEBUG" self.constraints)
                        (run-for-each-except setter
                                             self.constraints
-                                            ;; XXX TODO FIXME:
-                                            ;; TypeError: <lambda>()
-                                            ;; missing 1 required
-                                            ;; positional argument:
-                                            ;; 'new_value'
                                             .process-new-value))]
                   [(!= new-value value)
                    (raise (ValueError "contradiction!" value new-value))]))]
@@ -83,13 +79,23 @@
                 (def self.value value)
                 (def self.connector connector)
                 (.connect! connector self)
-                ;; (import [pudb [set-trace]]) (set-trace) ; XXX DELETEME
                 (.set! connector self value))]
 
-   [process-new-value (λ [self new-value]
-                         (when (!= new-value self.value)
-                           (raise (ValueError
-                                   "constants are not mutable"))))]])
+   ;;; fffffff "ValueError: constants are not mutable: 2 != None"
+   ;; [process-new-value (λ [self]
+   ;;                       (when (!= self.value self.connector.value)
+   ;;                         (raise (ValueError
+   ;;                                 (.format
+   ;;                                  "constants are not mutable: {} != {}"
+   ;;                                  self.value self.connector.value)))))]])
+   ;;
+   ;;; what happens if we don't try to catch errors??
+   ;;;; it is a horrible tragedy of the human condition that writing
+   ;;;; new code with new ideas is more fun than debugging the old
+   ;;;; stuff that never quite acutally worked, and one of these days
+   ;;;; it is going to kill me dead
+   [process-new-value (λ [self])]])
+
 
 (defclass Probe []
   [[__init__ (λ [self name connector]
@@ -100,7 +106,7 @@
                       ; returns None (something that had never come up
                       ; for me while writing _Python_)
 
-   [process-new-value (λ [self new-value]
+   [process-new-value (λ [self]
                (print (.format "{}={}" self.name self.connector.value)))]
 
    [process-forget-value (λ [self] (print (.format "{}=??" self.name)))]])
