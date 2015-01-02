@@ -79,10 +79,13 @@
 (defn multiply-streams [first-stream second-stream]
   (stream-map (λ [a b] (* a b)) first-stream second-stream))
 
+(defn exponentiate-stream [stream power]
+  (stream-map (λ [x] (** x power)) stream))
+
 (defn merge [first-stream second-stream]
   (cond [(not first-stream) second-stream]
         [(not second-stream) first-stream]
-        [true ; "else"
+        [:else
          (let [[first-car (stream-car first-stream)]
                [second-car (stream-car second-stream)]]
            (cond [(< first-car second-car)
@@ -91,7 +94,7 @@
                  [(< second-car first-car)
                   (cons-stream second-car (merge (stream-cdr second-stream)
                                                  first-stream))]
-                 [true ; "else"
+                 [:else
                   (cons-stream first-car (apply merge
                                                 (list
                                                  (map stream-cdr
@@ -108,3 +111,23 @@
   ;; and not just guess
   (cons-stream (stream-car stream)
                (add-streams stream (partial-sums (stream-cdr stream)))))
+
+;; Exercise 3.59(a)
+(defn integrate-series [df-stream]
+  (let [[f-scale-stream (exponentiate-stream ℕ+ -1)]]
+    (multiply-streams df-stream f-scale-stream)))
+
+;; Exercise 3.59(b)
+(def exp-series
+  (cons-stream 1 (integrate-series exp-series)))
+
+(def cos-series
+  (cons-stream 1 (integrate-series (scale-stream sin-series -1))))
+
+(def sin-series
+  (cons-stream 0 (integrate-series cos-series)))
+
+;; Exercise 3.60
+;;; ummmm, this is the "Cauchy product", right? but the template the
+;;; book suggests we complete doesn't seem to fit that
+(defn multiply-series [])
