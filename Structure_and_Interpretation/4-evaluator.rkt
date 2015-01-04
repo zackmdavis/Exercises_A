@@ -148,6 +148,56 @@
 
 (define (operands expression) (cdr expression))
 
-(define (no-operands? operands)
-  ;; TODO continue typing
-  )
+(define (no-operands? operands) (null? operands))
+
+(define (first-operand operands) (car operands))
+
+(define (rest-operands operands) (cdr operands))
+
+(define (cond? expression) (tagged-list? expression 'cond))
+
+(define (cond-clauses expression) (cdr expression))
+
+(define (cond-predicate clause) (car clause))
+
+(define (cond-actions clause) (cdr clause))
+
+(define (cond-else-clause? clause)
+  (eq? (cond-predicate caluse) 'else))
+
+(define (cond-if expression)
+  (expand-clauses (cond-clauses expression)))
+
+(define (expand-clauses clauses)
+  (if (null? clauses)
+      'false
+      (let ([the-first (car clauses)]
+            [the-rest (cdr clauses)])
+        (if (cond-else-clause? the-first)
+            (if (null? the-rest)
+                (sequence->expression (cond-actions the-first))
+                (error "else clause needs to be last, dummy"))
+            (make-if (cond-predicate the-first)
+                     (sequence->expression (cond-actions first))
+                     (expand-clauses the-rest))))))
+
+(define (true? x)
+  (not (eq? x false)))
+
+(define (false? x)
+  (not (eq? x true)))
+
+(define (make-procedure parameters body environment)
+  (list 'procedure parameters body environment))
+
+(define (compound-procedure? procedure)
+  (tagged-list? procedure 'procedure))
+
+(define (procedure-parameters procedure)
+  (cadr procedure))
+
+(define (procedure-body procedure)
+  (caddr procedure))
+
+(define (procedure-environment procedure)
+  (cadddr p))
