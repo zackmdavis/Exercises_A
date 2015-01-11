@@ -200,4 +200,28 @@
   (caddr procedure))
 
 (define (procedure-environment procedure)
-  (cadddr p))
+  (cadddr procedure))
+
+(define (enclosing-environment env) (cdr env))
+
+(define (first-frame env) (car env))
+
+(define the-empty-environment '())
+
+(define (make-frame variables values)
+  (cons variables values))
+
+(define (frame-variables frame) (car frame))
+
+(define (frame-values frame) (cdr frame))
+
+(define (add-binding-to-frame! variable value frame)
+  (set-car! frame (cons variable (car frame)))
+  (set-cdr! frame (cons value (cdr frame))))
+
+(define (extend-environment variables values base-environment)
+  (if (= (length variables) (length values))
+      (cons (make-from variables values) base-environment)
+      (if (< (length variables) (length values)
+             (raise "Too many arguments!!")
+             (raise "Too few arguments!!")))))
