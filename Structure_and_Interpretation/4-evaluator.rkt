@@ -2,14 +2,14 @@
 
 (define (my-eval expression environment)
   (cond [(self-evaluating? expression) expression]
-        [(variable? expression) (lookup-variable expression environment)]
+        [(variable? expression) (lookup-variable-value expression environment)]
         [(quoted? expression) (dequote expression)]
         [(assignment? expression) (eval-assignment expression environment)]
         [(definition? expression) (eval-definition expression environment)]
         [(if? expression) (eval-if expression environment)]
-        [(fn? expression) (make-procedure (fn-parameters expression)
-                                          (fn-body expression)
-                                          environment)]
+        [(λ? expression) (make-procedure (λ-parameters expression)
+                                         (λ-body expression)
+                                         environment)]
         [(begin? expression) (eval-sequence (begin-actions expression)
                                             environment)]
         [(cond? expression) (my-eval (cond->if expression) environment)]
@@ -29,6 +29,8 @@
                          arguments
                          (procedure-environment procedure)))]
         [else (raise "unknown procedure type!?")]))
+
+(define (primitive-procedure? procedure)
 
 (define (pralues expressions environment)
   (if (no-operands? expressions)
@@ -165,7 +167,7 @@
 (define (cond-else-clause? clause)
   (eq? (cond-predicate caluse) 'else))
 
-(define (cond-if expression)
+(define (cond->if expression)
   (expand-clauses (cond-clauses expression)))
 
 (define (expand-clauses clauses)
@@ -225,3 +227,44 @@
       (if (< (length variables) (length values)
              (raise "Too many arguments!!")
              (raise "Too few arguments!!")))))
+
+(define (lookup-variable-value variable environment)
+  (define (environment-loop environment)
+    (define (scan variables values)
+      (cond [(null? variables)
+             (environment-loop (enclosing-environment environment))]
+            [(eq? variable (car variables))
+             (car values)]
+            [else (scan (cdr variables) (cdr values))]))
+    (if (eq? environment the-empty-environment)
+        (raise "Unbound variables!!" variable)
+        (let ([frame (first-frame environment)])
+          (scan (frame-variables frame)
+                (frame-values frame)))))
+  (environment-loop environment))
+
+(define (set-variable-value! variable value environment)
+  (define (environment-loop environment)
+    (define (scan variables values)
+      (cond [(null? variables)
+             (environment-loop (enclosing-environment environment))]
+            [(eq? variable (car variables))
+             (set-car! values value)]
+            [else (scan (cdr variables) (cdr values))]))
+    (if (eq? environment the-empty-environment)
+        (raise "unbound variable!!!")
+        (let ([frame (first-frame environment)])
+          (scan (frame-variables frame)
+                (frame-values frame)))))
+  (environment-loop environment))
+
+(define (define-variable! variable value environment)
+  (let ([frame (first-frame environment)])
+    (define (scan variables values)
+      (cond [(null? variables)
+             (add-binding-to-frame! variable value frame)]
+            [(eq? variable (car variables))
+             (set-car! values value)]
+            [else (scan (cdr variables) (cdr values))]))
+    (scan (frame-variables frame)
+          (frame-values frame))))

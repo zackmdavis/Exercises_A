@@ -63,4 +63,17 @@ number `numerator`/`denominator`!"
 
 (assert-stream-begins! (expand 1 7 10) [1 14 142 1428 14285 142857 1428571])
 
-;; (printstream-until (exponentiate-stream cos-series -1) 8)
+;; confirmation of exercise 3.60
+(def derived-unity (add-streams (square-series cos-series)
+                                (square-series sin-series)))
+(assert-stream-begins!
+ derived-unity
+ [1 0 0 0]) ; next term is 5.55e-17 due to floating-point error
+
+;; (printstream-until cos-series 10)
+;; (printstream-until sin-series 10)
+;; (printstream-until tan-series 10)
+
+(printstream-until (sqrt-stream 2) 10)
+(print)
+(printstream-until (sqrt-stream 9) 10)

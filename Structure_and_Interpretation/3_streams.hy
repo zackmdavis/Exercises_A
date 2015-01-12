@@ -112,6 +112,14 @@
   (cons-stream (stream-car stream)
                (add-streams stream (partial-sums (stream-cdr stream)))))
 
+(defn eval-series-at [series x terms]
+  (setv y 0)
+  (setv remaining series)
+  (for [i (range terms)]
+    (+= y (* (stream-car remaining) (** x i)))
+    (setv remaining (stream-cdr remaining)))
+  y)
+
 ;; Exercise 3.59(a)
 (defn integrate-series [df-stream]
   (let [[f-scale-stream (exponentiate-stream ℕ+ -1)]]
@@ -128,6 +136,60 @@
   (cons-stream 0 (integrate-series cos-series)))
 
 ;; Exercise 3.60
-;;; ummmm, this is the "Cauchy product", right? but the template the
-;;; book suggests we complete doesn't seem to fit that
-(defn multiply-series [])
+;;
+;; (a_0 + a_1*x + a_2*x^2 + ...)(b_0 + b_1*x + b_2*x^2 + ...)
+;;  = a_0*b_0 + a_1*b_0*x + a_2*b_0*x^2 + ...
+;;              a_1*b_1*x + a_1*b_1*x^2 + a_2*b_1*x^3 + ...
+(defn multiply-series [a b]
+  (cons-stream (* (stream-car a) (stream-car b))
+               (add-streams (scale-stream (stream-cdr a) (stream-car b))
+                            (multiply-series a (stream-cdr b)))))
+
+(defn square-series [series]
+  (multiply-series series series))
+
+;; Exercise 3.61
+(defn invert-unit-series [series]
+  (cons-stream 1
+               (multiply-series
+                (scale-stream series -1)
+                (invert-unit-series series))))
+
+;; Exercise 3.62
+;; `invert-unit-series` works on a series with a constant term of
+;; unity, so I think the only slightly subtle part here is getting
+;; this to work with divisors with arbitrary nonzero constant term
+;;
+;; XXX: this is most probably wrong, as we can infer from tan-series
+;; being wrong
+(defn divide-series [dividend divisor]
+  (let [[denormalized-by (stream-car divisor)]
+        [normalizer (/ 1 denormalized-by)]
+        [normalized (scale-stream divisor normalizer)]]
+    (multiply-series dividend
+                     (scale-stream (invert-unit-series normalized)
+                                   normalizer))))
+
+;; XXX: this is wrong
+;; => (eval-series-at tan-series 0.5 10)
+;; 0.33318569176621754
+;; => (tan 0.5)
+;; 0.5463024898437905
+(def tan-series (divide-series sin-series cos-series))
+
+(defn sqrt-improve [guess x]
+  (/ (+ guess (/ x guess)) 2))
+
+(defn sqrt-stream [x]
+  (def guesses
+    (cons-stream 1
+                 (stream-map (λ [guess]
+                                (sqrt-improve guess x))
+                             guesses)))
+  guesses)
+
+(defn pi-summands [n]
+  ;;; to be continued ...
+  ;; (cons-stream (/ 1 n)
+  ;;              (stream-map (λ [a b] (- a b)
+)
