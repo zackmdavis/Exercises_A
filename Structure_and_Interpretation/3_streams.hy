@@ -193,3 +193,19 @@
   ;; (cons-stream (/ 1 n)
   ;;              (stream-map (λ [a b] (- a b)
 )
+
+(defn zipstream [&rest streams]  ; I also think this is just one word
+  (cons-stream (list (map stream-car streams))
+               ;; XXX TypeError: Iteration on malformed cons
+               (apply zipstream (list (stream-map stream-cdr streams)))))
+
+(defn enumerate-stream [stream]
+  (zipstream ℕ stream))
+
+;; Exercise 3.64
+(defn stream-limit [stream tolerance]
+  (let [[next (stream-car stream)]
+        [postnext (stream-car (stream-cdr stream))]]
+    (if (< (abs (- postnext next)) tolerance)
+      postnext
+      (stream-limit (stream-cdr stream) tolerance))))

@@ -74,6 +74,4 @@ number `numerator`/`denominator`!"
 ;; (printstream-until sin-series 10)
 ;; (printstream-until tan-series 10)
 
-(printstream-until (sqrt-stream 2) 10)
-(print)
-(printstream-until (sqrt-stream 9) 10)
+(print (stream-limit (sqrt-stream 13) 0.2))
