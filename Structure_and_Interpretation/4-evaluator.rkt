@@ -1,4 +1,8 @@
-#lang racket
+#lang r6rs
+(import (library (rnrs base (6)))
+        (library (rnrs io simple (6)))
+        (library (rnrs lists (6)))
+        (library (rnrs mutable-pairs (6))))
 
 (define (my-eval expression environment)
   (cond [(self-evaluating? expression) expression]
@@ -17,7 +21,7 @@
                                                       environment)
                                              (pralues (operands expression)
                                                       environment))]
-        [else (raise "unknown expression type!?")]))
+        [else (display "unknown expression type!?")]))
 
 (define (my-apply procedure arguments)
   (cond [(primitive-procedure? procedure) (apply-primitive-procedure procedure
@@ -28,9 +32,19 @@
                          (procedure-parameters procedure)
                          arguments
                          (procedure-environment procedure)))]
-        [else (raise "unknown procedure type!?")]))
+        [else (display "unknown procedure type!?")]))
 
 (define (primitive-procedure? procedure)
+  (tagged-list? procedure 'primitive))
+
+;; TO BE CONTINUED ...
+
+;; (define primitive-procedures
+;;   (list (list 'car car))
+
+;; (define (apply-primitive-procedure procedure)
+;;   (apply
+;;    ()
 
 (define (pralues expressions environment)
   (if (no-operands? expressions)
@@ -225,8 +239,8 @@
   (if (= (length variables) (length values))
       (cons (make-from variables values) base-environment)
       (if (< (length variables) (length values)
-             (raise "Too many arguments!!")
-             (raise "Too few arguments!!")))))
+             (display "Too many arguments!!")
+             (display "Too few arguments!!")))))
 
 (define (lookup-variable-value variable environment)
   (define (environment-loop environment)
@@ -237,7 +251,7 @@
              (car values)]
             [else (scan (cdr variables) (cdr values))]))
     (if (eq? environment the-empty-environment)
-        (raise "Unbound variables!!" variable)
+        (display "Unbound variables!!" variable)
         (let ([frame (first-frame environment)])
           (scan (frame-variables frame)
                 (frame-values frame)))))
@@ -252,7 +266,7 @@
              (set-car! values value)]
             [else (scan (cdr variables) (cdr values))]))
     (if (eq? environment the-empty-environment)
-        (raise "unbound variable!!!")
+        (display "unbound variable!!!")
         (let ([frame (first-frame environment)])
           (scan (frame-variables frame)
                 (frame-values frame)))))

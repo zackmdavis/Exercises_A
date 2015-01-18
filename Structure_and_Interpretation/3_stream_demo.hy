@@ -82,5 +82,31 @@ number `numerator`/`denominator`!"
                     (exponentiate-stream ℕ+ -1)))
 
 (def ln2-stream (partial-sums ln2-summands))
+;; => (stream-limit ln2-stream 0.0082645)
+;; {'\ufdd0:steps': 119, '\ufdd0:result': 0.6972623372115745}
+
 (def ln2-superstream (euler-transform ln2-stream))
+;; => (stream-limit (euler-transform ln2-stream) 0.00000015)
+;; {'\ufdd0:steps': 116, '\ufdd0:result': 0.6931471073165805}
+
 (def ln2-ultrastream (accelerando euler-transform ln2-stream))
+;; => (stream-limit (accelerando euler-transform ln2-stream) 0.00000015)
+;; {'\ufdd0:steps': 4, '\ufdd0:result': 0.6931471806635636}
+
+;; Exercise 3.66
+;; "Can you make any general comments about the order in which pairs
+;; are placed into [`(nondecreasing-pairs ℕ ℕ)`]? For example, how
+;; many pairs precede the pair (1, 100)? the pair (99, 100)? (100,
+;; 100)?"
+;;
+;; It's notable that the lack of tail-recursion-optimization prevents
+;; us from getting empirics for the specific pairs named as
+;; examples (sys.setrecursionlimit can help, not indefinitely)---
+;; => (stream-search un2 [1 100])
+;; 396
+;; => (stream-search un2 [99 100])
+;; [very long stack trace omitted]
+;; RuntimeError: maximum recursion depth exceeded in comparison
+;;
+;; => (list-comp (stream-search un2 [i 10]) [i (range 8)])
+;; [19, 36, 66, 118, 206, 350, 574, 894]

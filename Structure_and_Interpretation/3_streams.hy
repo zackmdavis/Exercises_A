@@ -47,6 +47,11 @@
     (stream-car stream)
     (stream-nth (stream-cdr stream) (dec n))))
 
+(defn stream-search [stream sought &optional [index 0]]
+  (if (= (stream-car stream) sought)
+    index
+    (stream-search (stream-cdr stream) sought (inc index))))
+
 (defn call-for-each [procedure stream]
   (when stream
     (do (procedure (stream-car stream))
@@ -200,7 +205,6 @@
 
 (def π-stream
   (scale-stream (partial-sums (π-summands 1)) 4))
-
 (def pi-stream π-stream) ; easier to type
 
 (defn euler-transform [stream]
@@ -219,13 +223,13 @@
 (defn accelerando [transform stream]
   (stream-map stream-car (make-tableau transform stream)))
 
-(defn zipstream [&rest streams]  ; I also think this is just one word
-  (cons-stream (list (map stream-car streams))
-               ;; XXX TypeError: Iteration on malformed cons
-               (apply zipstream (list (stream-map stream-cdr streams)))))
+(defn two-zipstream  ; I also think this is just one word
+  ;; XXX: arity two insufficiently general
+  [first-stream second-stream]
+  (stream-map (λ [s t] [s t]) first-stream second-stream))
 
 (defn enumerate-stream [stream]
-  (zipstream ℕ stream))
+  (two-zipstream ℕ stream))
 
 ;; Exercise 3.64
 (defn stream-limit [stream tolerance &optional [step 0]]
@@ -234,3 +238,30 @@
     (if (< (abs (- postnext next)) tolerance)
       {:result postnext :steps step}
       (stream-limit (stream-cdr stream) tolerance (inc step)))))
+
+(defn two-interleave
+  ;; XX: arity two insufficiently general
+  [first-stream second-stream]
+  (if (not first-stream)
+    second-stream
+    (cons-stream (stream-car first-stream)
+                 (two-interleave second-stream (stream-cdr first-stream)))))
+
+(defn interleave [&rest streams]
+  ;; XXXX: does not produce correct output
+  (if (not (first streams))
+    (apply interleave (rest streams))
+    (cons-stream (stream-car (first streams))
+                 (let [[rotated (list (rest streams))]]
+                   (.append rotated (first streams))
+                   (interleave rotated)))))
+
+(defn nondecreasing-pairs [s t]
+  (cons-stream
+   [(stream-car s) (stream-car t)]
+   (two-interleave (stream-map (λ [x] [(stream-car s) x])
+                           (stream-cdr t))
+               (nondecreasing-pairs (stream-cdr s) (stream-cdr t)))))
+
+(def upperℕ² (nondecreasing-pairs ℕ ℕ))
+(def un2 upperℕ²)  ; easier to type
