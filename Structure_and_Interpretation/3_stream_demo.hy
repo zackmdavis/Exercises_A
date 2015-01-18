@@ -74,4 +74,13 @@ number `numerator`/`denominator`!"
 ;; (printstream-until sin-series 10)
 ;; (printstream-until tan-series 10)
 
-(print (stream-limit (sqrt-stream 13) 0.2))
+(assert-stream-begins! (partial-sums ℕ) [0 1 3 6 10 15 21 28 36 45])
+
+;; Exercise 3.65
+(def ln2-summands
+  (multiply-streams (multitone-stream [1 -1])
+                    (exponentiate-stream ℕ+ -1)))
+
+(def ln2-stream (partial-sums ln2-summands))
+(def ln2-superstream (euler-transform ln2-stream))
+(def ln2-ultrastream (accelerando euler-transform ln2-stream))

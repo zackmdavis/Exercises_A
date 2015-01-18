@@ -105,12 +105,18 @@
   `(for [[g!i reference-item] (enumerate ~reference-list)]
      (assert (= reference-item (stream-nth ~stream g!i)))))
 
+(defn monotone-stream [x]
+  (cons-stream x (monotone-stream x)))
+
+(defn multitone-stream [iterable]
+  (cons-stream (first iterable)
+               (multitone-stream (+ (rest iterable) [(first iterable)]))))
+
 ;; Exercise 3.55
 (defn partial-sums [stream]
-  ;; XXX wrong these are squares; you need to understand the problem
-  ;; and not just guess
   (cons-stream (stream-car stream)
-               (add-streams stream (partial-sums (stream-cdr stream)))))
+               (add-streams (monotone-stream (stream-car stream))
+                            (partial-sums (stream-cdr stream)))))
 
 (defn eval-series-at [series x terms]
   (setv y 0)
@@ -188,11 +194,30 @@
                              guesses)))
   guesses)
 
-(defn pi-summands [n]
-  ;;; to be continued ...
-  ;; (cons-stream (/ 1 n)
-  ;;              (stream-map (λ [a b] (- a b)
-)
+(defn π-summands [n]
+  (cons-stream (/ 1 n)
+               (stream-map (λ [t] (* -1 t)) (π-summands (+ n 2)))))
+
+(def π-stream
+  (scale-stream (partial-sums (π-summands 1)) 4))
+
+(def pi-stream π-stream) ; easier to type
+
+(defn euler-transform [stream]
+  (let [[s0 (stream-nth stream 0)]
+        [s1 (stream-nth stream 1)]
+        [s2 (stream-nth stream 2)]]
+    (cons-stream (- s2 (/ (** (- s2 s1) 2)
+                          (+ s0 (* -2 s1) s2)))
+                 (euler-transform (stream-cdr stream)))))
+
+(defn make-tableau [transform stream]
+  (cons-stream stream
+               (make-tableau transform
+                             (transform stream))))
+
+(defn accelerando [transform stream]
+  (stream-map stream-car (make-tableau transform stream)))
 
 (defn zipstream [&rest streams]  ; I also think this is just one word
   (cons-stream (list (map stream-car streams))
@@ -203,9 +228,9 @@
   (zipstream ℕ stream))
 
 ;; Exercise 3.64
-(defn stream-limit [stream tolerance]
+(defn stream-limit [stream tolerance &optional [step 0]]
   (let [[next (stream-car stream)]
         [postnext (stream-car (stream-cdr stream))]]
     (if (< (abs (- postnext next)) tolerance)
-      postnext
-      (stream-limit (stream-cdr stream) tolerance))))
+      {:result postnext :steps step}
+      (stream-limit (stream-cdr stream) tolerance (inc step)))))
