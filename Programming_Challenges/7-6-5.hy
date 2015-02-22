@@ -8,10 +8,22 @@
 (defn primes-less-than [x]
   (list (itertools.takewhile (fn [p] (< p x)) primes)))
 
+(defn my-prime-sorting-heuristic [x choices-remaining]
+  ;; XXX: I don't think we want to be in the
+  ;; (= choices-remaining 0) situation in the first place
+  (if (!= choices-remaining 0)
+    (fn [p] (abs (- (/ x choices-remaining) p)))
+    (fn [p] p)))
+
+(defn primes-less-than-sorted-heuristically [x choices-remaining]
+  (apply sorted
+         [(primes-less-than x)]
+         {"key" (my-prime-sorting-heuristic x choices-remaining)}))
+
 (def total-calls 0)
 (def start-time nil)
 
-(defn searcher [target components &optional [call-depth 0]]
+(defn searcher [target components]
   (global total-calls)
   (global start-time)
   (+= total-calls 1)
@@ -23,28 +35,17 @@
      (sys.stderr.write
 
       (.format (+ "found solution {} for {} "
-                  ;; XXX: it's always going to be depth 4, dummy
-                  "at depth {} in the call tree "
                   "after {} calls and {} seconds\n")
-               components target call-depth total-calls (- (time.time)
-                                                           start-time)))
+               components target total-calls (- (time.time) start-time)))
      ;; clean the campsite for next time
      (setv total-calls 0)
      (setv start-time nil)
      components)
     (next
      (filter (fn [x] (if x x))
-             (genexpr (searcher target (+ components [p]) (inc call-depth))
-                      ;; XXX: we need a smarter candidate-generator
-                      ;; than this; we waste a lot of time iterating
-                      ;; over everything like "2 + 2 + 2 + 3" when we
-                      ;; know that's not going to be it
-                      ;;
-                      ;; PROPOSAL: sort `primes-less-than` by some
-                      ;; criterion having to do with how far we are
-                      ;; from the target and how many more primes we
-                      ;; must requisition
-                      [p (primes-less-than target)]
+             (genexpr (searcher target (+ components [p]))
+                      [p (primes-less-than-sorted-heuristically
+                          target (- 4 (len components)))]
                       (<= (sum (+ components [p])) target)))
      nil)))
 
@@ -65,6 +66,19 @@
   (validate [24 36 46]))
 
 (test-primes-less-than)
-;; (test-sample-input) XXX: 46 is really slow
+(test-sample-input)
 
 (validate (range 100))
+
+;; XXX: wacky five-to-have-and-a-half orders-of-magnitude
+;; anti-optimization on some edge cases
+;;
+;; I think this is why serious people bother proving theorems about
+;; their heuristics.
+;;
+;; found solution [19, 23, 31, 3] for 76 after 5 calls and
+;; 0.0001068115234375 seconds
+;; found solution [19, 19, 37, 2] for 77 after 894060 calls and
+;; 33.284077167510986 seconds
+;; found solution [19, 23, 31, 5] for 78 after 5 calls and
+;; 0.00011324882507324219 seconds

@@ -55,13 +55,19 @@
 (def directions [[0 -1] [0 1] [-1 0] [1 0]])
 
 (defn nearby-possible-worlds [state]
-  (filter #(not= state %)
-          (for [direction directions]
-            (slide state direction))))
+  (for [direction directions]
+    [direction (slide state direction)]))
 
-(defn endeavor []
-  ;; TODO
-)
+(defn productive-daydreaming [state]
+  (sort-by (fn [[_move world]] (optimism goal-state world))
+           (nearby-possible-worlds state)))
+
+(defn endeavor [state history]
+  (if (= state goal-state)
+    history
+    (some identity
+          (for [[move world] (productive-daydreaming state)]
+            (endeavor world (conj history move))))))
 
 (deftest can-find-coordinates-of-void
   (is (= [3 3] (coordinates-of-void goal-state))))
@@ -81,20 +87,12 @@
   (is (= 2
          (optimism [[:1 :2] [:3 nil]] [[:2 :1] [:3 nil]]))))
 
-(deftest test-nearby-possible-worlds
-  (is (= #{[[:1  nil]
-           [:3  :2 ]]
-          [[:1  :2 ]
-           [nil :3 ]]}
-         (set (nearby-possible-worlds [[:1 :2 ]
-                                       [:3 nil]])))))
-
-;; TODO
 (deftest test-sample-output
   (is (endeavor [[ :2  :3  :4 nil]
                  [ :1  :5  :7  :8]
                  [ :9  :6 :10 :12]
-                 [:13 :14 :11 :15]])
+                 [:13 :14 :11 :15]]
+                [])
       [[0 -1] [0 -1] [0 -1] [1 0] [0 1] [1 0] [0 1] [1 0] [0 1]]))
 
 (run-tests)
