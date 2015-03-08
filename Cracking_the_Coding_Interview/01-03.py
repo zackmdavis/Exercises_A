@@ -6,9 +6,6 @@
 
 from collections import Counter
 
-def count_letters(word):
-    return Counter(word)
-
 def permuted(first, second):
     return Counter(first) == Counter(second)
 
