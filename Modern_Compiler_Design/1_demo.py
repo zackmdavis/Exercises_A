@@ -1,3 +1,4 @@
+import logging
 import sys
 
 def is_layout_character(ch):
@@ -10,7 +11,7 @@ class Token:
         self.representation = ch
 
     def __repr__(self):
-        return "{}Token({})".format(
+        return "{}Token('{}')".format(
             "Digit" if self.classification == 'digit' else '',
             self.representation
         )
@@ -23,22 +24,25 @@ def lex(filename):
 
 
 class Expression:
-    # # actual fields monkey-patched on instance after initialization
-    # # kind = None
-    # # value = None
-    # # operator = None
-    # # left = None
-    # # right = None
+    # actual fields monkey-patched on instance after initialization
+
+    def __setattr__(self, name, value):
+        logging.info("in `Expression.__setattr__` for %s", self)
+        super().__setattr__(name, value)
 
     def __str__(self):
         # digit case
-        if getattr(self, 'value'):
-            print self.value
-            return
-        else:
-            for attr in ('left', 'operator', 'right'):
-                print getattr(self, attr, "__ none __")
+        if ((getattr(self, 'kind', None) == "digit") and
+            (getattr(self, 'value', None))):
+            return str(self.value)
+        else:  # parenthesized expression case
+            return ' '.join(
+                str(getattr(self, attr, "∅"))
+                for attr in ('left', 'operator', 'right')
+            )
 
+    def __repr__(self):
+        return str(self)
 
 class DemoParsingException(Exception):
     pass
@@ -46,6 +50,8 @@ class DemoParsingException(Exception):
 
 def parse_operator(under_construction, tokenstream):
     t = next(tokenstream)
+    logging.info("drew %s from the tokenstream", t)
+
     if t.classification == '+':
         under_construction.operator = '+'
         return True
@@ -58,6 +64,7 @@ def parse_operator(under_construction, tokenstream):
 
 def parse_expression(under_construction, tokenstream):
     t = next(tokenstream)
+    logging.info("drew %s from the tokenstream", t)
 
     if t.classification == "digit":
         under_construction.kind = "digit"
@@ -85,22 +92,13 @@ def parse_expression(under_construction, tokenstream):
 
 
 def parse_program(filename):
+    logging.basicConfig(level=logging.INFO)
     ast_root = Expression()
     parse_expression(ast_root, lex(filename))
+    print("parse result:", ast_root)
 
 
 if __name__ == "__main__":
     parse_program(sys.argv[1])
 
-# XXX doesn't work as written
-
-# zmd@ExpectedReturn:~/Code/Textbook_Exercises_A/Modern_Compiler_Design$
-# python 1_demo.py demo.demo
-# Traceback (most recent call last):
-#   File "1_demo.py", line 93, in <module>
-#     parse_program(sys.argv[1])
-#   File "1_demo.py", line 89, in parse_program
-#     parse_expression(ast_root, lex(filename))
-#   File "1_demo.py", line 76, in parse_expression
-#     raise DemoParsingException("missing operator")
-# __main__.DemoParsingException: missing operator
+# XXX: seems to only be able to handle leftmost derivations?!
