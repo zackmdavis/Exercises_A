@@ -1,5 +1,6 @@
 (ns ceasar-cipher
-  (:require [clojure.test :refer :all]))
+  (:require [clojure.test :refer :all]
+            [clojure.string :refer [join split]]))
 
 (def ^:dynamic
   ;; I don't actually expect wanting to rebind this, but hey, earmuffs
@@ -20,9 +21,9 @@
         shift (Integer/parseInt shift-response)
         selected-cipher (cipher *alphabet* shift)]
     (println "selected cipher is " selected-cipher)
-    ;; TODO
-    )
-  )
+    (let [message-response (.readLine *in*)
+          ciphertext (join (map #(selected-cipher % %) message-response))]
+      (println "the 'encrypted' message is: " ciphertext))))
 
 (deftest test-shift-letters
   (is (= [\W \X \Y \Z \A \B \C \D \E \F \G \H \I

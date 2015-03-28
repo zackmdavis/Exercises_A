@@ -5,20 +5,23 @@
 use std::old_io;
 
 fn shift_letters(shift: usize) -> Vec<&str> {
-     // XXX: it is written that "this function's return type contains a
-     // borrowed value, but the signature does not say which one of
-     // `shift`'s 0 elided lifetimes it is borrowed from"
-    let alphabet = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
-                    "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
-                    "U", "V", "W", "X", "Y", "Z"];
-    let end_slice = &alphabet[(26-shift)..26];
-    let start_slice = &alphabet[0..(26-shift)];
+    // XXX THE LANGUAGE IS A CRUEL HOAX: "easy_0003.rs:7:39: 7:43 help:
+    // this function's return type contains a borrowed value, but the
+    // signature does not say which one of `shift`'s 0 elided lifetimes
+    // it is borrowed from"---now, I may be but a humble Pythonista from
+    // the country, but I'm pretty sure you can't talk about "which one"
+    // of a set of size zero
+    let mut start_slice = vec!["A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
+                               "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
+                               "U", "V", "W", "X", "Y", "Z"];
+    // Wait for it ...
+    let end_slice = start_slice.split_off();
     let mut shifted = Vec::new();
-    for letter in end_slice.iter() {
+    for letter in end_slice {
         shifted.push(letter);
     }
-    for letter in start_slice.iter() {
-        shifted.push(letter);
+    for letter in start_slice {
+        shifted.push(letter)
     }
     shifted
 }
