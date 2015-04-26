@@ -3,8 +3,9 @@
 
 // Easy #183: Semantic Version Sort
 
-use std::str::Split;
+use std::cmp::Ordering;
 
+#[derive(Eq,PartialEq,PartialOrd,Debug)]
 struct Version {
     major: usize,
     minor: usize,
@@ -12,17 +13,29 @@ struct Version {
     label: String
 }
 
+impl Ord for Version {
+    fn cmp(&self, other: &Version) -> Ordering {
+        let self_segments: [usize; 3] = [self.major, self.minor, self.patch];
+        let other_segments: [usize; 3] = [other.major, other.minor, other.patch];
+        for (&self_segment, &other_segment) in
+            self_segments.iter().zip(other_segments.iter())
+        {
+            if self_segment > other_segment {
+                return Ordering::Greater;
+            } else if self_segment < other_segment {
+                return Ordering::Less;
+            } // else {
+            //     continue;
+            // }
+        }
+        // TODO: label
+        Ordering::Equal
+    }
+}
+
 fn versionize(version_string: String) -> Version {
-    let segments: Split<&str> = version_string.split('.');
-    // XXX lots of type errors; I would seem to have misread the
-    // documentation
-    let version: Version = Version {
-        major: segments.nth(0).unwrap_or("0".to_string()).parse(),
-        minor: segments.nth(1).unwrap_or("0".to_string()).parse(),
-        patch: segments.nth(2).unwrap_or("0".to_string()).parse(),
-        label: segments.nth(3).unwrap_or("".to_string())
-    };
-    version
+    let segments = version_string.split('.');
+    Version {major: 1, minor: 2, patch: 3, label: "".to_string()}
 }
 
 #[test]
@@ -36,6 +49,6 @@ fn test_versionize() {
         Version {major: 5, minor: 0, patch: 0, label: "".to_string()},
     ];
     for (&input, &expected) in inputs.iter().zip(expected_outputs.iter()) {
-        assert_eq!(input, expected);
+        assert_eq!(versionize(input), expected);
     }
 }
