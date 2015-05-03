@@ -39,6 +39,17 @@ frontend.
     I        see      you
 ```
 
+__1.7.__ _(On which of the illustrated compiler modules would call
+upon on error-reporting module.)_ I feel like several of them could
+need to call the error-reporinting module depending on where the error
+occurred, but if we imagine that a valid AST produces valid code, then
+we would imagine errors happening before that, the lexer and parser
+raising errors about bad tokens and bad syntax, respectively.
+
+__1.10__ I think "our" demo compiler (scare quotes because my
+attempted Python is a very loose translation) can be said to be
+_broad_ rather than _narrow_. `Parse_program` deals with the whole
+program.
 
 **1.13.** *Concerning the term "extended subset."* If Bar is an
 extended subset of Quux, then Bar doesn't do everything Quux does
