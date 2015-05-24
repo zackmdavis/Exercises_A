@@ -35,7 +35,6 @@ fn hungry_puppy_path_length(theres: &mut Vec<Site>) -> f64 {
     for _ in 0..theres.len() {
         let was_here = here;
         let (new_here, reward_meters) = pop_nearest_site(was_here, theres);
-        println!("{:?}", new_here);
         odometer += reward_meters;
         here = new_here;
     }

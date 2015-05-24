@@ -49,7 +49,7 @@
           comparators))
 
 (defn sorting-network-validates? [n network]
-  (every? sorted? (for [possible-world (bitproduct (eval n))]
+  (every? sorted? (for [possible-world (bitproduct n)]
                     (apply-sorting-network possible-world network))))
 
 (deftest test-sample-output
