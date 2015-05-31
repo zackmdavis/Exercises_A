@@ -65,9 +65,15 @@ fn ciphercells_to_ciphertext(
     ciphertext
 }
 
-fn encode(plaintext: String) -> String {
-    "TODO".to_string()
+fn encode(plaintext: String, depth: usize) -> String {
+    ciphercells_to_ciphertext(&mut plaintext_to_ciphercells(plaintext, depth))
 }
+
+
+fn ciphertext_to_ciphercells(ciphertext: String, depth: usize) {
+
+}
+
 
 fn decode(ciphertext: String) -> String {
     "TODO".to_string()
@@ -110,4 +116,14 @@ fn test_ciphercells_to_ciphertext() {
     ];
     let expected_ciphertext: String = "ryuts".to_string();
     assert_eq!(expected_ciphertext, ciphercells_to_ciphertext(&mut ciphercells));
+}
+
+#[test]
+fn test_encode() {
+    assert_eq!(encode("helloworld".to_string(), 4), "hoewrlolld".to_string());
+}
+
+#[test]
+fn test_decode() {
+    assert_eq!(encode("hoewrlolld".to_string(), 4), "helloworld".to_string());
 }
