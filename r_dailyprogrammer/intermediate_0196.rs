@@ -5,6 +5,10 @@
 
 use std::cmp::Ordering;
 
+// Yay, this works! However ...
+// TODO: I think we could do this with less boilerplatey or
+// copy-pastey code; clean it up as much as possible
+
 #[derive(Debug, PartialEq, Eq, PartialOrd)]
 struct RailfenceCipherCell {
     figure: char,
@@ -30,6 +34,20 @@ impl Ord for RailfenceCipherCell {
     }
 }
 
+fn scoot_railfence_counters(zig_depth: usize,
+                            length: &mut usize, depth: &mut usize,
+                            zig: &mut bool) {
+    *length += 1;
+    if (*depth == zig_depth - 1) || (*depth == 0) {
+        *zig = !*zig;
+    }
+    if *zig {
+        *depth += 1;
+    } else {
+        *depth -= 1;
+    }
+}
+
 fn plaintext_to_ciphercells(plaintext: String,
                             zig_depth: usize) -> Vec<RailfenceCipherCell> {
     let mut cells: Vec<RailfenceCipherCell> = Vec::new();
@@ -41,15 +59,8 @@ fn plaintext_to_ciphercells(plaintext: String,
             RailfenceCipherCell{
                 figure: character, length: length, depth: depth }
         );
-        length += 1;
-        if (depth == zig_depth - 1) || (depth == 0) {
-            zig = !zig;
-        }
-        if zig {
-            depth += 1
-        } else {
-            depth -= 1
-        }
+        scoot_railfence_counters(zig_depth,
+                                 &mut length, &mut depth, &mut zig);
     }
     cells
 }
@@ -65,57 +76,43 @@ fn ciphercells_to_ciphertext(
     ciphertext
 }
 
+fn ciphercells_to_plaintext(
+    ciphercells: &mut Vec<RailfenceCipherCell>) -> String {
+    ciphercells.sort_by(|a, b| a.length.cmp(&b.length));
+    let mut plaintext: String = String::new();
+    for cell in ciphercells.iter() {
+        plaintext.push(cell.figure);
+    }
+    plaintext
+}
+
 fn encode(plaintext: String, depth: usize) -> String {
     ciphercells_to_ciphertext(&mut plaintext_to_ciphercells(plaintext, depth))
 }
 
 
-fn ciphertext_to_ciphercells(ciphertext: String, depth: usize) {
-
+fn ciphertext_to_ciphercells(ciphertext: String, zig_depth: usize) -> Vec<RailfenceCipherCell> {
+    let mut addresses: Vec<(usize, usize)> = Vec::new();
+    let mut length: usize = 0;
+    let mut depth: usize = 0;
+    let mut zig: bool = false;
+    for _character in ciphertext.chars() {
+        addresses.push((depth, length));
+        scoot_railfence_counters(zig_depth,
+                                 &mut length, &mut depth, &mut zig);
+    }
+    addresses.sort();
+    let mut cells: Vec<RailfenceCipherCell> = Vec::new();
+    for (character, &address) in ciphertext.chars().zip(addresses.iter()) {
+        cells.push(RailfenceCipherCell{
+            depth: address.0, length: address.1, figure: character}
+        );
+    }
+    cells
 }
 
-
-fn decode(ciphertext: String) -> String {
-    "TODO".to_string()
-}
-
-#[test]
-fn test_plaintext_to_ciphercells() {
-    let plaintext: String = "bookaimstogetyouup".to_string();
-    let expected_ciphercells: Vec<RailfenceCipherCell> = vec![
-        RailfenceCipherCell{ figure: 'b', length: 0, depth: 0 },
-        RailfenceCipherCell{ figure: 'o', length: 1, depth: 1 },
-        RailfenceCipherCell{ figure: 'o', length: 2, depth: 2 },
-        RailfenceCipherCell{ figure: 'k', length: 3, depth: 1 },
-        RailfenceCipherCell{ figure: 'a', length: 4, depth: 0 },
-        RailfenceCipherCell{ figure: 'i', length: 5, depth: 1 },
-        RailfenceCipherCell{ figure: 'm', length: 6, depth: 2 },
-        RailfenceCipherCell{ figure: 's', length: 7, depth: 1 },
-        RailfenceCipherCell{ figure: 't', length: 8, depth: 0 },
-        RailfenceCipherCell{ figure: 'o', length: 9, depth: 1 },
-        RailfenceCipherCell{ figure: 'g', length: 10, depth: 2 },
-        RailfenceCipherCell{ figure: 'e', length: 11, depth: 1 },
-        RailfenceCipherCell{ figure: 't', length: 12, depth: 0 },
-        RailfenceCipherCell{ figure: 'y', length: 13, depth: 1 },
-        RailfenceCipherCell{ figure: 'o', length: 14, depth: 2 },
-        RailfenceCipherCell{ figure: 'u', length: 15, depth: 1 },
-        RailfenceCipherCell{ figure: 'u', length: 16, depth: 0 },
-        RailfenceCipherCell{ figure: 'p', length: 17, depth: 1 },
-    ];
-    assert_eq!(expected_ciphercells, plaintext_to_ciphercells(plaintext, 3));
-}
-
-#[test]
-fn test_ciphercells_to_ciphertext() {
-    let mut ciphercells: Vec<RailfenceCipherCell> = vec![
-        RailfenceCipherCell{ figure: 'r', length: 0, depth: 0 },
-        RailfenceCipherCell{ figure: 'u', length: 1, depth: 1 },
-        RailfenceCipherCell{ figure: 's', length: 2, depth: 2 },
-        RailfenceCipherCell{ figure: 't', length: 3, depth: 1 },
-        RailfenceCipherCell{ figure: 'y', length: 4, depth: 0 },
-    ];
-    let expected_ciphertext: String = "ryuts".to_string();
-    assert_eq!(expected_ciphertext, ciphercells_to_ciphertext(&mut ciphercells));
+fn decode(ciphertext: String, depth: usize) -> String {
+    ciphercells_to_plaintext(&mut ciphertext_to_ciphercells(ciphertext, depth))
 }
 
 #[test]
@@ -125,5 +122,9 @@ fn test_encode() {
 
 #[test]
 fn test_decode() {
-    assert_eq!(encode("hoewrlolld".to_string(), 4), "helloworld".to_string());
+    assert_eq!(decode("hoewrlolld".to_string(), 4), "helloworld".to_string());
+}
+
+fn test_roundtrip() {
+    // TODO: test roundtrip with randomly-generated strings
 }
