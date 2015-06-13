@@ -91,24 +91,105 @@ fn my_example_ast() -> ArithmeticTreeNode {
 
 // Now we can implement the `Generate code` procedure described in Figure 4.26.
 
-fn generate_code(node: ArithmeticTreeNode) {
-    // TODO: finish
+// But there are a few helper functions involved.
 
-    // match node.operation {
-    //     Operation::Constant => println!("push_constant(&mut my_stack, &mut my_stack_pointer, {});", node.),
-    //     Operation::StoreLocal =>,
-    //     Operation::PushLocal,
-    //     Operation::Add,
-    //     Operation::Subtract,
-    //     Operation::Multiply
-    // }
+fn push_all<T: Clone>(ourself: &mut Vec<T>, other: &Vec<T>) {
+    // There actually is a `push_all` implemented for Vecs, but
+    // it's marked "unstable", so I can't use it with the stable-like
+    // rustc release channel that I'm currently using (I actually
+    // haven't upgraded since beta 9854143cb).
+    //
+    // https://doc.rust-lang.org/std/vec/struct.Vec.html#method.push_all
+    for thing in other.iter() {
+        let copy_of_thing = thing.clone();
+        ourself.push(copy_of_thing);
+    }
+}
+
+fn emit(instruction_list: &mut Vec<String>,
+        instruction: &str,
+        argument: Payload) {
+    let rendered_argument: String = match argument {
+        Payload::Value(c) => format!(", {}", c),
+        Payload::Position(i) => format!(", {}", i),
+        Payload::None => "".to_string()
+    };
+    let rendered_instruction = format!(
+        "{}(&mut my_stack, &mut my_stack_pointer{});",
+        instruction, rendered_argument
+    );
+    instruction_list.push(rendered_instruction);
+}
+
+
+
+fn generate_code(node: ArithmeticTreeNode) -> Vec<String> {
+    let mut instruction_list = Vec::new();
+    match node.operation {
+        Operation::Constant => emit(&mut instruction_list,
+                                    "push_constant", node.payload),
+        Operation::StoreLocal => emit(&mut instruction_list,
+                                    "store_local", node.payload),
+        Operation::PushLocal => emit(&mut instruction_list,
+                                    "push_local", node.payload),
+        Operation::Add => {
+            if let Some(child_box) = node.left {
+                let child_code = generate_code(*child_box);
+                push_all(&mut instruction_list, &child_code);
+            }
+            if let Some(child_box) = node.right {
+                let child_code = generate_code(*child_box);
+                push_all(&mut instruction_list, &child_code);
+            }
+            emit(&mut instruction_list,
+                 "add_top_two", node.payload)
+        },
+        Operation::Subtract => {
+            if let Some(child_box) = node.left {
+                let child_code = generate_code(*child_box);
+                push_all(&mut instruction_list, &child_code);
+            }
+            if let Some(child_box) = node.right {
+                let child_code = generate_code(*child_box);
+                push_all(&mut instruction_list, &child_code);
+            }
+            emit(&mut instruction_list,
+                 "subtract_top_two", node.payload)
+        },
+        Operation::Multiply => {
+            if let Some(child_box) = node.left {
+                let child_code = generate_code(*child_box);
+                push_all(&mut instruction_list, &child_code);
+            }
+            if let Some(child_box) = node.right {
+                let child_code = generate_code(*child_box);
+                push_all(&mut instruction_list, &child_code);
+            }
+            emit(&mut instruction_list,
+                 "multiply_top_two", node.payload)
+        }
+    }
+    instruction_list
+}
+
+
+fn generated_code_example_experiment_test() {
+    let mut my_stack: Vec<isize> = Vec::new();
+    let mut my_stack_pointer: usize = 0;
+
+    // copy-pasted from output of actual codegen
+    push_constant(&mut my_stack, &mut my_stack_pointer, 1);
+    push_constant(&mut my_stack, &mut my_stack_pointer, 1);
+    add_top_two(&mut my_stack, &mut my_stack_pointer);
+
+    println!("{:?} {}", my_stack, my_stack_pointer);
 }
 
 fn main() {
-    let mut my_stack: Vec<isize> = Vec::new();
-    let mut my_stack_pointer: usize = 0;
-    push_constant(&mut my_stack, &mut my_stack_pointer, 1);
-    push_constant(&mut my_stack, &mut my_stack_pointer, 2);
-    add_top_two(&mut my_stack, &mut my_stack_pointer);
-    println!("{:?} {}", my_stack, my_stack_pointer);
+    let my_ast: ArithmeticTreeNode = my_example_ast();
+    let teh_codes = generate_code(my_ast);
+    for codes in teh_codes.iter() {
+        println!("{}", codes);
+    }
+    // generated_code_example_experiment_test()
 }
