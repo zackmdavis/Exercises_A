@@ -1,0 +1,7 @@
+[package]
+name = "my_stockfigher_trades_exec_crate"
+version = "0.0.1"
+authors = ["Zack M. Davis <code@zackmdavis.net>"]
+
+[dependencies]
+hyper = "0.7"
