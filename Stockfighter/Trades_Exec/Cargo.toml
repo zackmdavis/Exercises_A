@@ -5,3 +5,7 @@ authors = ["Zack M. Davis <code@zackmdavis.net>"]
 
 [dependencies]
 hyper = "0.7"
+serde = "0.6"
+serde_json = "0.6"
+serde_macros = "0.6"
+time = "0.1"
