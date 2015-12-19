@@ -1,6 +1,6 @@
 [package]
-name = "my_stockfigher_trades_exec_crate"
-version = "0.0.1"
+name = "my_stockfighter_trades_exec_crate"
+version = "0.0.3-rdlevel"
 authors = ["Zack M. Davis <code@zackmdavis.net>"]
 
 [dependencies]

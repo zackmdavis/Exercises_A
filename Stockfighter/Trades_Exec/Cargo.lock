@@ -1,6 +1,6 @@
 [root]
-name = "my_stockfigher_trades_exec_crate"
-version = "0.0.1"
+name = "my_stockfighter_trades_exec_crate"
+version = "0.0.3-rdlevel"
 dependencies = [
  "hyper 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 0.6.6 (registry+https://github.com/rust-lang/crates.io-index)",
