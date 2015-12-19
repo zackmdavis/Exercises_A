@@ -52,7 +52,7 @@ impl Stockfighter {
         let mut response = client.get(&path).headers(headers).send().unwrap();
         let mut response_buffer = String::new();
         response.read_to_string(&mut response_buffer).unwrap();
-        println!("{}", response_buffer);
+        debug!("GET response to {} was: {:?}", path, response_buffer);
         response_buffer
     }
 
@@ -83,7 +83,8 @@ impl Stockfighter {
                 Some(quote)
             }
             Err(err) => {
-                println!("couldn't get quote: {:?}", err);
+                error!("couldn't get quote: {:?}; response buffer was {:?}",
+                       err, response_buffer);
                 None
             }
         }
@@ -118,7 +119,6 @@ impl Stockfighter {
                            self.account, self.venue, self.symbol,
                            quantity, price,
                            direction_parameter, order_type_parameter);
-        println!("{:?}", body);
         let mut response = client.post(
             &format!("{}/venues/{}/stocks/{}/orders", BASE_URL,
                      self.venue, self.symbol))
@@ -126,10 +126,9 @@ impl Stockfighter {
             .body(&body)
             .headers(headers)
             .send().unwrap();
-        println!("response: {:?}", response);
         let mut response_buffer = String::new();
         response.read_to_string(&mut response_buffer).unwrap();
-        println!("response buffer: {:?}", response_buffer);
+        debug!("Response to order was: {:?}", response_buffer);
         let response_value: serde_json::Value = serde_json::from_str(
             &response_buffer).unwrap();
         response_value.as_object().unwrap().get("id").unwrap().as_u64().unwrap()
@@ -176,6 +175,22 @@ impl Stockfighter {
             None => Vec::new()
         };
         Some(fills)
+    }
+
+    pub fn wait_for_closed_order_status(&self, order_id: OrderId) -> Vec<Fill> {
+        loop {
+            match self.get_closed_order_status(order_id) {
+                Some(fills) => {
+                    for fill in &fills {
+                        info!("fill for order #{}: {}", order_id, fill);
+                    }
+                    return fills;
+                },
+                None => {
+                    warn!("Waiting for status of order #{} ...", order_id);
+                }
+            }
+        }
     }
 }
 

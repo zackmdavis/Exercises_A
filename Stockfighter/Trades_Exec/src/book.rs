@@ -11,7 +11,12 @@ pub type Cents = i64;
 pub type Shares = i64;
 
 
-#[derive(Copy, Clone)]
+pub fn format_money(amount: Cents) -> String {
+    format!("${:.2}", amount as f32 / 100.)
+}
+
+
+#[derive(Debug, Copy, Clone)]
 pub struct Fill {
     pub action: Action,
     pub quantity: Shares,
@@ -25,7 +30,7 @@ impl Fill {
 }
 
 
-impl fmt::Debug for Fill {
+impl fmt::Display for Fill {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "{:?} {}@{}¢", self.action, self.quantity, self.price)
     }
@@ -91,12 +96,13 @@ pub struct Quote {
 
 #[derive(Debug)]
 pub struct Position {
+    cash: Cents,
     stakes: BTreeMap<Cents, Shares>
 }
 
 impl Position {
     pub fn new() -> Self {
-        Position { stakes: BTreeMap::new() }
+        Position { cash: 0, stakes: BTreeMap::new() }
     }
 
     pub fn record_fill(&mut self, fill: &Fill) {
@@ -110,6 +116,7 @@ impl Position {
             Action::Sell => -1
         };
         let stance = quantity * direction;
+        self.cash -= stance;
         *self.stakes.entry(price).or_insert(0) += stance;
     }
 
@@ -139,12 +146,16 @@ impl Position {
             .map(|(_amount, quantity)| quantity).sum()
     }
 
-    pub fn profit(&self) -> Cents {
-        self.stakes.iter().map(|(amount, quantity)| -1 * amount * quantity).sum()
+    pub fn profit(&self, market: Cents) -> Cents {
+        let valuation: Cents =  self.stakes.iter()
+            .map(|(_amount, quantity)|
+                 -1 * market * quantity).sum();
+        valuation + self.cash
     }
 }
 
 
+#[cfg(test)]
 mod tests {
     use super::Position;
     use trade::Action;
