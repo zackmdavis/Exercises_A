@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 
 use hyper::client::Client;
 use hyper::header::Headers;
+use hyper::method::Method;
 use serde_json;
 
 use book::{Fill, Quote, Cents, Shares};
@@ -44,16 +45,22 @@ impl Stockfighter {
         }
     }
 
-    pub fn get(&self, path: String) -> String {
+    pub fn request(&self, method: Method, path: String) -> String {
+        // TODO? Option<Body> to use this for POST, too
         let client = Client::new();
         let mut headers = Headers::new();
         headers.set_raw("X-Starfighter-Authorization",
                         vec![self.api_key.clone().into_bytes()]);
-        let mut response = client.get(&path).headers(headers).send().unwrap();
+        let mut response = client.request(method.clone(), &path)
+            .headers(headers).send().unwrap();
         let mut response_buffer = String::new();
         response.read_to_string(&mut response_buffer).unwrap();
-        println!("{}", response_buffer);
+        debug!("response to {:?} {} was: {:?}", method, path, response_buffer);
         response_buffer
+    }
+
+    pub fn get(&self, path: String) -> String {
+        self.request(Method::Get, path)
     }
 
     pub fn healthcheck(&self) -> String {
@@ -83,7 +90,8 @@ impl Stockfighter {
                 Some(quote)
             }
             Err(err) => {
-                println!("couldn't get quote: {:?}", err);
+                error!("couldn't get quote: {:?}; response buffer was {:?}",
+                       err, response_buffer);
                 None
             }
         }
@@ -118,7 +126,6 @@ impl Stockfighter {
                            self.account, self.venue, self.symbol,
                            quantity, price,
                            direction_parameter, order_type_parameter);
-        println!("{:?}", body);
         let mut response = client.post(
             &format!("{}/venues/{}/stocks/{}/orders", BASE_URL,
                      self.venue, self.symbol))
@@ -126,13 +133,54 @@ impl Stockfighter {
             .body(&body)
             .headers(headers)
             .send().unwrap();
-        println!("response: {:?}", response);
         let mut response_buffer = String::new();
         response.read_to_string(&mut response_buffer).unwrap();
-        println!("response buffer: {:?}", response_buffer);
+        debug!("Response to order was: {:?}", response_buffer);
         let response_value: serde_json::Value = serde_json::from_str(
             &response_buffer).unwrap();
         response_value.as_object().unwrap().get("id").unwrap().as_u64().unwrap()
+    }
+
+    pub fn cancel_order(&self, order_id: OrderId) -> Vec<Fill> {
+        let response_buffer = self.request(
+            Method::Delete,
+            format!("{}/venues/{}/stocks/{}/orders/{}",
+                    BASE_URL, self.venue, self.symbol, order_id)
+        );
+        // XXX EVIL: copy-pasted code because that's apparently how I feel
+        // today
+        let response_value: serde_json::Value = serde_json::from_str(
+            &response_buffer).unwrap();
+        let response_object = response_value.as_object().unwrap();
+        let action = match response_object.get("direction").unwrap()
+            .as_string().unwrap() {
+                "buy" => Action::Buy,
+                "sell" => Action::Sell,
+                a @ _ => panic!("unexpected action {:?}", a)
+        };
+        let fill_value_array_maybe = response_object.get("fills");
+        match fill_value_array_maybe {
+            Some(fill_value_array) => {
+                let fill_value_vec = fill_value_array.as_array()
+                    .unwrap();
+                // XXX I wanted to map it, but the borrow checker won't let me,
+                // as also explained in the other comment because this code has
+                // been copy-pasted in contemptuous defiance of the moral law
+                let mut fills = Vec::new();
+                for fill_value in fill_value_vec {
+                    fills.push(
+                        Fill::new(
+                            action,
+                            fill_value.as_object().unwrap().get("qty").unwrap()
+                                .as_i64().unwrap(),
+                            fill_value.as_object().unwrap().get("price").unwrap()
+                                .as_i64().unwrap())
+                            )
+                }
+                fills
+            },
+            None => Vec::new()
+        }
     }
 
     pub fn get_closed_order_status(&self, order_id: OrderId)
@@ -176,6 +224,22 @@ impl Stockfighter {
             None => Vec::new()
         };
         Some(fills)
+    }
+
+    pub fn wait_for_closed_order_status(&self, order_id: OrderId) -> Vec<Fill> {
+        loop {
+            match self.get_closed_order_status(order_id) {
+                Some(fills) => {
+                    for fill in &fills {
+                        info!("fill for order #{}: {}", order_id, fill);
+                    }
+                    return fills;
+                },
+                None => {
+                    warn!("Waiting for status of order #{} ...", order_id);
+                }
+            }
+        }
     }
 }
 

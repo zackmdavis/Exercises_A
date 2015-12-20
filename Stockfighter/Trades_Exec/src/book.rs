@@ -11,7 +11,12 @@ pub type Cents = i64;
 pub type Shares = i64;
 
 
-#[derive(Copy, Clone)]
+pub fn format_money(amount: Cents) -> String {
+    format!("${:.2}", amount as f32 / 100.)
+}
+
+
+#[derive(Debug, Copy, Clone)]
 pub struct Fill {
     pub action: Action,
     pub quantity: Shares,
@@ -25,7 +30,7 @@ impl Fill {
 }
 
 
-impl fmt::Debug for Fill {
+impl fmt::Display for Fill {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "{:?} {}@{}¢", self.action, self.quantity, self.price)
     }
@@ -88,18 +93,42 @@ pub struct Quote {
     ok: bool
 }
 
+impl fmt::Display for Quote {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}: bid: {} (depth {}); ask: {} (depth {})",
+               self.symbol,
+               match self.bid {
+                   Some(bid) => format_money(bid),
+                   None => "(none)".to_owned()
+               },
+               self.bid_depth,
+               match self.ask {
+                   Some(ask) => format_money(ask),
+                   None => "(none)".to_owned()
+               },
+               self.ask_depth)
+    }
+}
+
 
 #[derive(Debug)]
 pub struct Position {
-    stakes: BTreeMap<Cents, Shares>
+    pub cash: Cents,
+    pub inventory: Shares,
+    trades: BTreeMap<Cents, Shares>
 }
 
 impl Position {
     pub fn new() -> Self {
-        Position { stakes: BTreeMap::new() }
+        Position {
+            cash: 0,
+            inventory: 0,
+            trades: BTreeMap::new(),
+        }
     }
 
     pub fn record_fill(&mut self, fill: &Fill) {
+        info!("got fill: {}", fill);
         self.record_trade(fill.action, fill.quantity, fill.price)
     }
 
@@ -110,14 +139,12 @@ impl Position {
             Action::Sell => -1
         };
         let stance = quantity * direction;
-        *self.stakes.entry(price).or_insert(0) += stance;
+        self.cash -= price * stance;
+        self.inventory += stance;
+        *self.trades.entry(price).or_insert(0) += stance;
     }
 
-    pub fn holdings(&self) -> Shares {
-        self.stakes.values().sum()
-    }
-
-    pub fn holdings_in_range(&self, min_price: Option<Cents>,
+    pub fn trades_in_range(&self, min_price: Option<Cents>,
                              max_price: Option<Cents>)
                              -> Shares {
         let mut l = 0;
@@ -135,16 +162,18 @@ impl Position {
                 Bound::Excluded(&u)
             });
 
-        self.stakes.range(lower_bound, upper_bound)
+        self.trades.range(lower_bound, upper_bound)
             .map(|(_amount, quantity)| quantity).sum()
     }
 
-    pub fn profit(&self) -> Cents {
-        self.stakes.iter().map(|(amount, quantity)| -1 * amount * quantity).sum()
+    pub fn profit(&self, market: Cents) -> Cents {
+        self.cash + self.inventory * market
     }
+
 }
 
 
+#[cfg(test)]
 mod tests {
     use super::Position;
     use trade::Action;
@@ -153,8 +182,19 @@ mod tests {
     fn concerning_our_position() {
         let mut our_position = Position::new();
         our_position.record_trade(Action::Buy, 10, 100);
+        // We don't profit from making a trade—if the "value" of the security
+        // is what we paid for it, the value of the inventory is exactly
+        // cancelled out by the decreased cash.
+        assert_eq!(-1000, our_position.cash);
+        assert_eq!(0, our_position.profit(100));
+        // But if the price were to go up, we would count ourselves a profit.
+        assert_eq!(10, our_position.profit(101));
+
+        // imagine the price goes down, and we "cut our losses" by selling half
+        // of our shares
         our_position.record_trade(Action::Sell, 5, 50);
-        assert_eq!(5, our_position.holdings());
-        assert_eq!(-750, our_position.profit());
+        assert_eq!(-750, our_position.cash);
+        assert_eq!(5, our_position.inventory);
+        assert_eq!(-500, our_position.profit(50));
     }
 }

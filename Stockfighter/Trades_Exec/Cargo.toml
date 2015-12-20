@@ -4,7 +4,9 @@ version = "0.0.3-rdlevel"
 authors = ["Zack M. Davis <code@zackmdavis.net>"]
 
 [dependencies]
+ansi_term = "0.7"
 hyper = "0.7"
+log = "0.3"
 serde = "0.6"
 serde_json = "0.6"
 serde_macros = "0.6"
