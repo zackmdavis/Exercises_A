@@ -2,7 +2,7 @@ use std::cmp;
 use std::thread::sleep;
 use std::time::Duration;
 
-use book::{Cents, Fill, Position, Shares, format_money};
+use book::{Ask, Bid, Cents, Fill, Position, Shares, format_money};
 use trade::{Stockfighter, Action, OrderType};
 
 
@@ -30,63 +30,110 @@ macro_rules! min_i64 {
 }
 
 
-pub fn maker(fighter: Stockfighter, mut our_position: Position) {
-    const BOUND_LONG: Shares = 800;
-    const BOUND_SHORT: Shares = -800;
+pub fn poll_order_book(fighter: Stockfighter) {
+    loop {
+        if let Some(book) = fighter.get_order_book() {
+            info!("order book is: {}", book)
+        }
+    }
+}
 
-    // XXX this is a lot saner than my previous attempts, but this bot still
-    // doesn't make money
+
+
+pub fn maker(fighter: Stockfighter, mut our_position: Position) {
+    const BOUND_LONG: Shares = 500;
+    const BOUND_SHORT: Shares = -500;
+
+    let mut market = 0;
+
+    let mut top_bid = Bid::new_bid(0, 0);
+    let mut top_ask = Ask::new_ask(0, 0);
+
+    // XXX this is significantly worse than chance
 
     loop {
         info!("Start of the trading loop!");
-        let quote_maybe = fighter.get_quote();
-        let quote = match quote_maybe {
-            Some(q) => q,
+        let book_maybe = fighter.get_order_book();
+        let book = match book_maybe {
+            Some(b) => {
+                info!("order book is: {}", b);
+                b
+            },
             None => {
-                warn!("couldn't get quote, continuing from top of loop ...");
+                warn!("couldn't get book, continuing from top of loop ...");
                 continue;
             }
         };
-        if quote.bid.is_none() || quote.ask.is_none() {
-            // not sure what to do if no one's already provided the
-            // other side of the spread
-            warn!("quote was {}; continuing ...", quote);
-            continue;
-        }
-        info!("quote is {}", quote);
-
-        let bid = quote.bid.unwrap();
-        let ask = quote.ask.unwrap();
-        let market = (bid + ask) / 2;
-        let undercut = (ask - bid) / 5;
-        let underask = ask - undercut;
-        let overbid = bid + undercut;
 
         let buy_limit = BOUND_LONG - our_position.inventory;
         let sell_limit = our_position.inventory - BOUND_SHORT;
 
-        let shares = min_i64!(quote.bid_size, quote.ask_size,
-                              buy_limit, sell_limit);
-        info!("We're going to try buying and selling {} shares", shares);
+        let mut buy_order_id = None;
+        let mut sell_order_id = None;
 
-        let buy_order_id = fighter.order(
-            shares, overbid, Action::Buy, OrderType::Limit);
-        let sell_order_id = fighter.order(
-            shares, underask, Action::Sell, OrderType::Limit);
-        assert!(underask - overbid > 0);
-
-        let buy_fills = fighter.cancel_order(buy_order_id);
-        for buy in &buy_fills {
-            our_position.record_fill(buy);
+        // up to risk limits, I can sell as many shares as I remember having
+        // bought for not more
+        if book.bids.len() > 0 {
+            top_bid = book.bids[0];
+            let net_shares_acquired_cheaper = our_position
+                .trades_in_range(None, Some(top_bid.price));
+            if net_shares_acquired_cheaper >= 0 {
+                let sell_this_many = if net_shares_acquired_cheaper == 0 {
+                    cmp::min(sell_limit, top_bid.quantity)
+                } else {
+                    min_i64!(sell_limit, top_bid.quantity,
+                             net_shares_acquired_cheaper)
+                };
+                if sell_this_many > 0 {
+                    sell_order_id = Some(fighter.order(
+                        sell_this_many, top_bid.price, Action::Sell,
+                        OrderType::Limit
+                    ));
+                }
+            }
         }
 
-        let sell_fills = fighter.cancel_order(sell_order_id);
-        for sell in &sell_fills {
-            our_position.record_fill(sell);
+        // up to risk limits, I can buy as many shares as I remember having
+        // sold for not less
+        if book.asks.len() > 0 {
+            top_ask = book.asks[0];
+            let net_shares_sold_more_expensively = our_position
+                .trades_in_range(Some(top_ask.price), None);
+            if net_shares_sold_more_expensively <= 0 {
+                let buy_this_many = if net_shares_sold_more_expensively == 0 {
+                    cmp::min(buy_limit, top_ask.quantity)
+                } else {
+                    min_i64!(buy_limit, top_ask.quantity,
+                             -net_shares_sold_more_expensively)
+                };
+                if buy_this_many > 0 {
+                    buy_order_id = Some(fighter.order(
+                        buy_this_many, top_ask.price, Action::Buy,
+                        OrderType::Limit
+                    ));
+                }
+            }
+        }
+
+        market = (top_bid.price + top_ask.price) / 2;
+
+        // How did we do??
+        if let Some(order_id) = buy_order_id {
+            let buy_fills = fighter.cancel_order(order_id);
+            for buy in &buy_fills {
+                our_position.record_fill(buy);
+            }
+        }
+
+        if let Some(order_id) = sell_order_id {
+            let sell_fills = fighter.cancel_order(order_id);
+            for sale in &sell_fills {
+                our_position.record_fill(sale);
+            }
         }
 
         info!("curent cash is {}", format_money(our_position.cash));
         info!("curent inventory is {}", our_position.inventory);
-        info!("current profit is {}", format_money(our_position.profit(market)));
+        warn!("current profit is {}", format_money(our_position.profit(market)));
     }
 }

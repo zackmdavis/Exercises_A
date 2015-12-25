@@ -20,13 +20,15 @@ use std::thread::sleep;
 use audit::initialize_logging;
 use book::{Position};
 use trade::{Stockfighter, Action, OrderType};
-use strategy::{maker};
+use strategy::{maker, poll_order_book};
 
 
 
 fn main() {
     initialize_logging();
     let fighter = Stockfighter::new();
+
+    // poll_order_book(fighter);
     let our_position = Position::new();
     maker(fighter, our_position);
 }

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io;
 use std::io::{Read, Write};
 
@@ -5,10 +6,14 @@ use hyper::client::Client;
 use hyper::header::Headers;
 use hyper::method::Method;
 use serde_json;
+use time;
 
-use book::{Fill, Quote, Cents, Shares};
+use book::{Fill, Quote, Cents, Shares, Bid, Ask, OrderBook};
 
 type OrderId = u64;
+
+type JsonObject = BTreeMap<String, serde_json::Value>;
+
 
 const BASE_URL: &'static str = "https://api.stockfighter.io/ob/api";
 
@@ -75,9 +80,72 @@ impl Stockfighter {
         self.get(format!("{}/venues/{}/stocks", BASE_URL, self.venue))
     }
 
-    pub fn get_order_book(&self) -> String {
-        self.get(format!("{}/venues/{}/stocks/{}", BASE_URL,
-                         self.venue, self.symbol))
+    pub fn get_order_book(&self) -> Option<OrderBook> {
+        let response_buffer = self.get(
+            format!("{}/venues/{}/stocks/{}", BASE_URL,
+                    self.venue, self.symbol));
+        let response_value: serde_json::Value = serde_json::from_str(
+            &response_buffer).unwrap();
+        let response_object: &JsonObject = response_value.as_object().unwrap();
+        let ok = response_object.get("ok").unwrap().as_boolean().unwrap();
+        if ok {
+            let timestamp = time::strptime(
+                response_object.get("ts").unwrap().as_string().unwrap(),
+                // like "2015-12-04T09:02:16.680986205Z"
+                "%Y-%m-%dT%T"
+            ).expect("couldn't parse timestamp");
+
+            // XXX: in Python, I would have immediately written
+            // ```
+            // bids, asks = [], []
+            // for proposal_type, proposals in (("bids", bids), ("asks", asks)):
+            //     ...
+            // ```
+            // to avoid the code-duplication, because I've done it thousands of
+            // times and know that it works. But in Rust, it feels subjectively
+            // easier to just copy-paste to save myself the pain of maybe
+            // having to fight the borrow checker
+            let mut bids = Vec::new();
+            if let Some(bid_data) = response_object
+                .get("bids").unwrap().as_array() {
+                    for bid_datum in bid_data {
+                        let bid_object = bid_datum.as_object().unwrap();
+                        bids.push(
+                            Bid::new_bid(
+                                bid_object.get("qty")
+                                    .unwrap().as_i64().unwrap(),
+                                bid_object.get("price")
+                                    .unwrap().as_i64().unwrap()
+                            )
+                        )
+                    }
+                }
+            let mut asks = Vec::new();
+            if let Some(ask_data) = response_object
+                .get("asks").unwrap().as_array() {
+                    for ask_datum in ask_data {
+                        let ask_object = ask_datum.as_object().unwrap();
+                        asks.push(
+                            Ask::new_ask(
+                                ask_object.get("qty")
+                                    .unwrap().as_i64().unwrap(),
+                                ask_object.get("price")
+                                    .unwrap().as_i64().unwrap()
+                            )
+                        )
+                    }
+                }
+
+            Some(OrderBook { venue: self.venue.clone(),
+                             symbol: self.symbol.clone(),
+                             bids: bids, asks: asks,
+                             timestamp: timestamp })
+        } else {
+            let error_message = response_object.get("error")
+                .unwrap().as_string().unwrap();
+            warn!("couldn't get order book: {}", error_message);
+            None
+        }
     }
 
     pub fn get_quote(&self) -> Option<Quote> {

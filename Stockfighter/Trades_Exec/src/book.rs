@@ -32,31 +32,72 @@ impl Fill {
 
 impl fmt::Display for Fill {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{:?} {}@{}¢", self.action, self.quantity, self.price)
+        write!(f, "{:?} {}@${}",
+               self.action, self.quantity, format_money(self.price))
     }
 }
 
 
 #[derive(Debug, Copy, Clone)]
-pub struct Bid {
-    quantity: Shares,
-    price: Cents
+pub struct Proposal {
+    pub action: Action,
+    pub quantity: Shares,
+    pub price: Cents,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct Ask {
-    quantity: Shares,
-    price: Cents
+pub type Bid = Proposal;
+pub type Ask = Proposal;
+
+impl Proposal {
+    pub fn new_bid(quantity: Shares, price: Cents) -> Self {
+        Bid { quantity: quantity, price: price, action: Action::Buy }
+    }
+
+    pub fn new_ask(quantity: Shares, price: Cents) -> Self {
+        Ask { quantity: quantity, price: price, action: Action::Sell }
+    }
+}
+
+impl fmt::Display for Proposal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{:?} {}@{}",
+               self.action, self.quantity, format_money(self.price))
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct OrderBook {
-    venue: String,
-    symbol: String,
-    // time: time::Tm, TODO
-    bids: Vec<Bid>,
-    asks: Vec<Ask>
+    pub venue: String,
+    pub symbol: String,
+
+    pub bids: Vec<Bid>,
+    pub asks: Vec<Ask>,
+
+    pub timestamp: time::Tm
 }
+
+impl fmt::Display for OrderBook {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        try!(write!(f, "Time: {}\n\n",
+                    time::strftime("%+", &self.timestamp).unwrap()));
+        try!(write!(f, "Bids:\n"));
+        for bid in &self.bids {
+            try!(write!(f, "{}\n", bid));
+        }
+        if self.bids.len() == 0 {
+            try!(write!(f, "—\n"));
+        }
+        try!(write!(f, "Asks:\n"));
+        for ask in &self.asks {
+            try!(write!(f, "{}\n", ask));
+        }
+        if self.asks.len() == 0 {
+            try!(write!(f, "—\n"));
+        }
+        write!(f, "\n")
+    }
+}
+
 
 
 #[derive(Debug, Clone, Deserialize)]
@@ -115,7 +156,7 @@ impl fmt::Display for Quote {
 pub struct Position {
     pub cash: Cents,
     pub inventory: Shares,
-    trades: BTreeMap<Cents, Shares>
+    trades: BTreeMap<Cents, Shares>,
 }
 
 impl Position {
@@ -145,8 +186,8 @@ impl Position {
     }
 
     pub fn trades_in_range(&self, min_price: Option<Cents>,
-                             max_price: Option<Cents>)
-                             -> Shares {
+                           max_price: Option<Cents>)
+                           -> Shares {
         let mut l = 0;
         let mut u = 0;
         let lower_bound = min_price.map_or(
