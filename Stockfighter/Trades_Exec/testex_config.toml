@@ -1,0 +1,4 @@
+[trades_exec]
+account = "EXB123456"
+symbol = "FOOBAR"
+venue = "TESTEX"

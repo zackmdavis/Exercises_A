@@ -1,4 +1,6 @@
-my_config
+my_auth_env
+my_config.toml
 notes.txt
 
 target/
+

@@ -9,6 +9,7 @@ use serde_json;
 use time;
 
 use book::{Fill, Quote, Cents, Shares, Bid, Ask, OrderBook};
+use office::parse_config;
 
 type OrderId = u64;
 
@@ -41,12 +42,13 @@ pub struct Stockfighter {
 
 impl Stockfighter {
 
-    pub fn new() -> Self {
+    pub fn new(api_key: String,
+               venue: String, symbol: String, account: String) -> Self {
         Stockfighter {
-            venue: env!("VENUE").to_owned(),
-            symbol: env!("SYMBOL").to_owned(),
-            account: env!("ACCOUNT").to_owned(),
-            api_key: env!("API_KEY").to_owned()
+            venue: venue,
+            symbol: symbol,
+            account: account,
+            api_key: api_key,
         }
     }
 
@@ -138,7 +140,7 @@ impl Stockfighter {
 
             Some(OrderBook { venue: self.venue.clone(),
                              symbol: self.symbol.clone(),
-                             bids: bids, asks: asks,
+                              bids: bids, asks: asks,
                              timestamp: timestamp })
         } else {
             let error_message = response_object.get("error")
@@ -311,18 +313,23 @@ impl Stockfighter {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::{Stockfighter, Action, OrderType};
+    use office::parse_config;
 
-    #[ignore]
     #[test]
     fn concerning_basic_infromation_acquisition() {
-        let stockfigher = Stockfighter::new();
-        stockfigher.healthcheck();
-        stockfigher.venue_healthcheck();
-        stockfigher.get_stocks();
-        stockfigher.get_order_book();
-        stockfigher.get_quote();
+        let config = parse_config("testex_config.toml");
+        let fighter = Stockfighter::new(config.api_key,
+                                            config.venue,
+                                            config.symbol,
+                                            config.account);
+        fighter.healthcheck();
+        fighter.venue_healthcheck();
+        fighter.get_stocks();
+        fighter.get_order_book();
+        fighter.get_quote();
     }
 
 }
