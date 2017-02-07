@@ -29,7 +29,7 @@
 use std::error::Error;
 use std::fmt::{self, Display};
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Cell {
     Pacgum(usize),
     Wall,
@@ -39,12 +39,12 @@ enum Cell {
 #[derive(Clone, Debug, PartialEq)]
 struct Pacmap {
     cursor: (isize, isize),
-    rows: usize,
-    cols: usize,
+    rows: isize,
+    cols: isize,
     cells: Vec<Cell>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct PacmapConstructionError {
     description: String
 }
@@ -69,7 +69,7 @@ impl Error for PacmapConstructionError {
 }
 
 impl Pacmap {
-    fn new(rows: usize, cols: usize) -> Self {
+    fn new(rows: isize, cols: isize) -> Self {
         Pacmap { cursor: (0, 0), rows: rows, cols: cols, cells: vec![] }
     }
 
@@ -83,7 +83,7 @@ impl Pacmap {
             for (j, cellspec) in line.chars().enumerate() {
                 let cell = match cellspec {
                     'C' => {
-                        cursor_slot = Some((i, j));
+                        cursor_slot = Some((i as isize, j as isize));
                         Cell::Pacgum(0)
                     },
                     n @ '0'...'9' => {
@@ -101,10 +101,10 @@ impl Pacmap {
             // set column width if it hasn't been set (i.e., we just processed
             // the first row)
             if col_width_slot.is_none() {
-                col_width_slot = Some(cells.len());
+                col_width_slot = Some(cells.len() as isize);
             }
             // check column width
-            if cells.len() != col_width_slot.expect("col_width_slot should be set") * row_counter {
+            if cells.len() as isize != col_width_slot.expect("col_width_slot should be set") * row_counter {
                 return Err(PacmapConstructionError::new(&format!("dimensional mismatch")))
             }
         }
@@ -117,32 +117,41 @@ impl Pacmap {
         })
     }
 
-    fn look(&mut self) -> Cell {
-        &mut self.cells[rows * self.cursor.0 + self.cursor.1]
+    fn look(&mut self) -> &mut Cell {
+        &mut self.cells[(self.rows * self.cursor.0 + self.cursor.1) as usize]
     }
 
-    fn act(&self, action: (isize, isize)) -> Option<Self> {
+    fn find_other_warp(&self) -> Option<(isize, isize)> {
+        None // TODO
+    }
+
+    fn act(&self, action: (isize, isize)) -> Vec<Self> {
         let mut advance = self.clone();
         advance.cursor = (advance.cursor.0 + action.0, advance.cursor.1 + action.1);
         if !(advance.cursor.0 >= 0 &&
-             advance.cursor.0 < advance.rows &&
+             advance.cursor.0 < advance.rows as isize &&
              advance.cursor.1 >= 0 &&
-             advance.cursor.1 < advance.cols) {
-            return None
+             advance.cursor.1 < advance.cols as isize) {
+            return vec![]
         }
+        let mut advances = vec![];
+
+        // XXX not compiling right now borrow checker oops
+
         match advance.look() {
-            Cell::Pacgum(mut ref n) => {
-                if n > 0 { // eat gum
-                    n -= 1
+            &mut Cell::Pacgum(ref mut n) => {
+                if *n > 0 { // eat gum
+                    *n -= 1
                 }
             },
-            Cell::Wall => { return None; },
-            Cell::Warp => {
-                // ummm, need to think about how to handle warps; prompt note
-                // says "you can either choose to ignore it or teleport
-                // yourself"
-                //
-                // program is not even compiling right now
+            &mut Cell::Wall => { vec![] },
+            &mut Cell::Warp => {
+                // prompt note says "you can either choose to ignore it or teleport
+                // yourself"; return a Vec of both outcomes
+                let mut warp_advance = advance.clone();
+                let warp_destination = advance.find_other_warp().expect("match guard says we can warp");
+                warp_advance.cursor = warp_destination;
+                vec![advance, warp_advance]
             }
         }
     }
