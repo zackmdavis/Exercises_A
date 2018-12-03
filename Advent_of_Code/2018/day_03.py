@@ -35,7 +35,6 @@ def the_first_star():
 
 
 def the_second_star():
-    # ... I don't see the bug
     grid = [[set() for i in range(1200)] for i in range(1200)]
     for claim in claims:
         n, start, size = claim
@@ -47,10 +46,8 @@ def the_second_star():
 
     all_claims = set(range(1, 1410))
     for i in range(1200):
-        print(len(all_claims))
         for j in range(1200):
-            spot = grid[start_y + y][start_x + x]
-            # print(spot)
+            spot = grid[i][j]
             if len(spot) > 1:
                 for entry in spot:
                     try:
