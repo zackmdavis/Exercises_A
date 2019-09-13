@@ -1,4 +1,5 @@
 from collections import Counter
+from string import ascii_uppercase
 
 with open("/usr/share/dict/words") as f:
     dictionary = {w.upper() for w in f.read().split('\n')}
@@ -24,3 +25,8 @@ def wordful_fraction(text):
 # The "maximum likelhihood" guess (from local frequencies) would be
 # easy to code, but how would we "preturb" that to actually "climb" to
 # the real solution? (And use one- and two-letter words as clues)
+
+def translate(mapping, ciphertext):
+    return ''.join(mapping[c] if c != ' ' else ' ' for c in ciphertext)
+
+print(translate(dict(zip(local_frequency_sequence(example), global_frequency_sequence)), example))
