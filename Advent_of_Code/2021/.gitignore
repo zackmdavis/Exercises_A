@@ -1,0 +1,5 @@
+# files without extensions
+*
+!*.*
+
+input
