@@ -78,7 +78,6 @@ def make_rays_2d(num_pixels_y, num_pixels_z, y_limit, z_limit):
     rays[:, 1, 1] = torch.linspace(-y_limit, y_limit, num_pixels_y).repeat(num_pixels_z)
     rays[:, 1, 2] = torch.linspace(-z_limit, z_limit, num_pixels_z).repeat(num_pixels_y)
     rays[:, 1, 0] = 1
-    print(rays.shape)
     return rays
 
 
@@ -90,7 +89,6 @@ def make_rays_2d_instructor_solution(num_pixels_y, num_pixels_z, y_limit, z_limi
     rays[:, 1, 0] = 1
     rays[:, 1, 1] = einops.repeat(ygrid, "y -> (y z)", z=num_pixels_z)
     rays[:, 1, 2] = einops.repeat(zgrid, "z -> (y z)", y=num_pixels_y)
-    print(rays.shape)
     return rays
 
 # I get a (non-axis aligned) triangle, rather than the pyramid I was supposed to get ...
@@ -153,6 +151,10 @@ def ray_intersects_triangle(origin, direction, a, b, c):
 # any preceding dimensions are specifying versions of that calculation in
 # parallel.
 
+# My code looks generally pretty similar to the instructor's, but I'm getting
+# nonsense answers, and I don't have the same linear system as them. :'( </3
+#
+# ...
 
 def raytrace_triangle(rays, triangle):
     # rays (n, 2 origin/direction points, 3 dimensions)
@@ -174,26 +176,61 @@ def raytrace_triangle(rays, triangle):
     assert b.shape == (3,)
     assert c.shape == (3,)
 
-    system = torch.stack([-directions, (b - a).tile(n), (c - a).tile(n)])
-    # XXX TODO FIXME—
-    #     Traceback (most recent call last):
-    #   File "/home/zmd/Code/Exercises_A/ARENA/raytracer.py", line 206, in <module>
-    #     intersects = raytrace_triangle(rays2d, test_triangle)
-    #   File "/home/zmd/Code/Exercises_A/ARENA/raytracer.py", line 177, in raytrace_triangle
-    #     system = torch.stack([-directions, (b - a).tile(n), (c - a).tile(n)])
-    # RuntimeError: stack expects each tensor to be equal size, but got [225, 3] at entry 0 and [675] at entry 1
-    assert system.shape == (n, 3, 3)
+    b_less_a_system = (b - a).tile(n, 1)
+    c_less_a_system = (c - a).tile(n, 1)
+    assert b_less_a_system.shape == (225, 3), "b⃗ − a⃗ shape is {}".format(b_less_a_system.shape)
+    assert c_less_a_system.shape == (225, 3), "c⃗ − a⃗ shape is {}".format(b_less_a_system.shape)
+    system = torch.stack([-directions, b_less_a_system, c_less_a_system], dim=1)
+    assert system.shape == (n, 3, 3), "system shape is {}" .format(system.shape)
 
-    resultants = origins - a.tile(n)
+    resultants = origins - a.tile(n, 1)
     assert resultants.shape == (n, 3)
 
     # I think we can disregard singular cases if we assume that the rays are
     # never perfectly skew to the plane
 
-    solution = torch.linalg.solve(system, resultants, dim=1)
-    assert solution.shape(n, 3)
+    print("my system:\n{}".format(system[:5]))
+    print("my resultant:\n{}".format(resultants[:5]))
+
+    solution = torch.linalg.solve(system, resultants)
+    assert solution.shape == (n, 3)
 
     return torch.Tensor([u >= 0 and v >= 0 and u + v <= 1 for _s, u, v in solution])
+
+
+def raytrace_triangle_instructor_solution(rays, triangle):
+    NR = rays.size(0)
+
+    # Triangle is [[Ax, Ay, Az], [Bx, By, Bz], [Cx, Cy, Cz]]
+    A, B, C = einops.repeat(triangle, "pts dims -> pts NR dims", NR=NR)
+    assert A.shape == (NR, 3)
+
+    # Each element of `rays` is [[Ox, Oy, Oz], [Dx, Dy, Dz]]
+    O, D = rays.unbind(dim=1)
+    assert O.shape == (NR, 3)
+
+    # Define matrix on left hand side of equation
+    mat = torch.stack([- D, B - A, C - A], dim=-1)
+
+    # Get boolean of where matrix is singular, and replace it with the identity in these positions
+    # Note - this works because mat[is_singular] has shape (NR_where_singular, 3, 3), so we
+    # can broadcast the identity matrix to that shape.
+    dets = torch.linalg.det(mat)
+    is_singular = dets.abs() < 1e-8
+    mat[is_singular] = torch.eye(3)
+
+    # Define vector on the right hand side of equation
+    vec = O - A
+
+    print("instructor's system:\n{}".format(mat[:5]))
+    print("instructor's resultant:\n{}".format(vec[:5]))
+
+    # Solve eqns
+    sol = torch.linalg.solve(mat, vec)
+    s, u, v = sol.unbind(dim=-1)
+
+    # Return boolean of (matrix is nonsingular, and solution is in correct range implying intersection)
+    return ((u >= 0) & (v >= 0) & (u + v <= 1) & ~is_singular)
 
 
 if __name__ == "__main__":
@@ -207,11 +244,7 @@ if __name__ == "__main__":
     # Plot triangle & rays
     test_triangle = torch.stack([A, B, C], dim=0)
     rays2d = make_rays_2d_instructor_solution(num_pixels_y, num_pixels_z, y_limit, z_limit)
-    triangle_lines = torch.stack([A, B, C, A, B, C], dim=0).reshape(-1, 2, 3)
-    render_lines(rays2d, triangle_lines)
 
     # Calculate and display intersections
     intersects = raytrace_triangle(rays2d, test_triangle)
-    print(intersects)
-    img = intersects.reshape(num_pixels_y, num_pixels_z).int()
-    imshow(img, origin="lower", width=600, title="Triangle (as intersected by rays)")
+    canon_intersects = raytrace_triangle_instructor_solution(rays2d, test_triangle)
