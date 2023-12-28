@@ -1,5 +1,7 @@
 import functools
+import math
 import torch
+import torch.nn.functional
 from torch import nn
 
 class ReLU(nn.Module):
@@ -19,8 +21,6 @@ class ReLU(nn.Module):
 
 # OK, it looks like you're supposed to transpose the weight matrix (I was about
 # to ask GPT-4, but I didn't)
-
-import math
 
 class Linear(nn.Module):
     def __init__(self, in_features: int, out_features: int, bias=True):
@@ -128,3 +128,106 @@ class MultiLayerPerceptron(nn.Module):
 #               hits += 1
 #           tested += 1
 #     print("accuracy: {}%".format(100 * hits/tested))
+
+# Questions about convolutions— (I watched the 3b1b video last night.)
+# We are asked: "Why would convolutional layers be less likely to overfit data
+# than standard linear (fully connected) layers?"
+#
+# I reply (hesitantly): the CNN's inductive bias fits e.g. image data where
+# nearby pixels are meaningfully related? You can't accidentally overfit to
+# spurious correlations between distant pixels if your architecture isn't
+# considering them.
+#
+# Instructor's answer (similar idea, arguably, but simpler): fewer weights are
+# learned!
+#
+# We are asked: "Suppose you fixed some random permutation of the pixels in an
+# image, and applied this to all images in your dataset, before training a
+# convolutional neural network for classifying images. Do you expect this to be
+# less effective, or equally effective?"
+#
+# I reply: less effective, because permuting the pixels ruins the property of
+# nearby pixels being related by the kernel.
+#
+# We are asked: "If you have a 28x28 image, and you apply a 3x3 convolution
+# with stride 1, padding 1, what shape will the output be?"
+#
+# I reply: the padding lets us position a 3x3 window centered at the edge, and
+# the stride means we're covering every position, so the output should also be
+# 28x28. (Instructor's answer affirms.)
+
+# Implementing Conv2d ... the shape and initialization of the weights is
+# straightforward enough from the doc page, but I'm not sure how to apply
+# `conv2d` ... but I shouldn't overthink it. (We're importing it; implementing
+# it is a bonus exercise later.) That doc page says it takes `input` and
+# `weight` as args.
+
+# Running the tests, I get `AssertionError: The values for attribute 'shape' do
+# not match: torch.Size([7, 9, 65, 259]) != torch.Size([7, 9, 34, 131]).`
+# ... oh! I'm not handling the `stride` or `padding` args! Probably I can just
+# store them in `__init__` and pass them on to `conv2d`?
+
+class Conv2d(nn.Module):
+    def __init__(
+        self, in_channels, out_channels, kernel_size, stride=1, padding=0
+    ):
+        super().__init__()
+        bound = math.sqrt(1/(in_channels * kernel_size**2))
+        self.weight = nn.Parameter(
+            torch.FloatTensor(out_channels, in_channels, kernel_size, kernel_size).uniform_(-bound, bound)
+        )
+        self.stride = stride
+        self.padding = padding
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.nn.functional.conv2d(x, self.weight, stride=self.stride, padding=self.padding)
+
+# Instructor's solution calculated the initialization differently, but I think
+# my version (with `_uniform`) is a lot more readable than arithmetically
+# manipulating `torch.rand`.
+
+# MaxPool2D; the "help, I'm confused about what to do" fold-out says this is
+# just a pass-through. Trivial.
+
+class MaxPool2d(nn.Module):
+    def __init__(self, kernel_size, stride=None, padding=1):
+        super().__init__()
+        self.stride = stride
+        self.kernel_size = kernel_size
+        self.padding = padding
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.nn.functional.max_pool2d(
+            x, kernel_size=self.kernel_size, stride=self.stride, padding=self.padding
+        )
+
+    def extra_repr(self) -> str:
+        return "kernel_size={}, stride={}, padding={}".format(self.kernel_size, self.stride, self.padding)
+
+# Implementing BatchNorm2d is hard ... I don't feel like it's been adequately
+# explained what it's supposed to do? Or I guess it has—
+#
+# If training:
+# For each batch and each channel, normalize mean/value over the width/height, for this batch.
+# Update `running_mean` and `running_var` using momentum (as specified in docs).
+#
+# If eval:
+# Normalize using the running-mean and running-var stored earlier.
+#
+# But then I'm confused: what are the weights for? Aren't there supposed to be
+# learnable weights? The doc page says, "γ and β are learnable parameter
+# vectors of size C (where C is the input size). By default, the elements of γ
+# are set to 1 and the elements of β are set to 0"—which makes it sound like
+# what the Colab calls `running_mean` and `running_var` are the
+# weights. They're just not being optimized with gradients ...?
+
+# This is sufficiently confusing that I'm going to look at the solution ...
+# I'm definitely going to need to come back for a second pass at this.
+
+
+class AveragePool(nn.Module):
+    def forward(self, x):
+        return torch.mean(x, dim=(2, 3))
+
+
+# Implementing Resnet looks intimidating!!
