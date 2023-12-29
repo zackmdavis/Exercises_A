@@ -9,9 +9,7 @@ class ReLU(nn.Module):
         # This is supposed to apply ReLU elementwise ... is there a more
         # efficient vectorizey way to do this rather than this Python list
         # comprehension?
-        return torch.Tensor([max(xi, 0) for xi in x])
-    # Solutions suggest `torch.maximum(x, torch.tensor(0.0))`
-
+        return torch.maximum(x, torch.tensor(0.0))
 
 # Trying out doing exercises in online colab; the fact that it has the tests already set up is convenient ...
 
@@ -32,7 +30,7 @@ class Linear(nn.Module):
         else:
             self.bias = None
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         result = x @ self.weight.T
         if self.bias is not None:
             result += self.bias
@@ -57,8 +55,6 @@ class Flatten(nn.Module):
         start = input_.shape[:self.start_dim]
         to_merge = input_.shape[self.start_dim:true_end+1]
         tail = input_.shape[true_end+1:]
-
-        print(start, to_merge, tail)
 
         if to_merge:
             merged = functools.reduce(lambda a, b: a*b, to_merge)
@@ -224,10 +220,240 @@ class MaxPool2d(nn.Module):
 # This is sufficiently confusing that I'm going to look at the solution ...
 # I'm definitely going to need to come back for a second pass at this.
 
+# If I'm so pathetic as to look at the solution, let me at least annotate it carefully—
+class BatchNorm2d(nn.Module):
+    def __init__(self, num_features, eps=1e-05, momentum=0.1):
+        super().__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+
+        # So the weight/bias parameters are apparently different from the
+        # buffer we use to track running mean/var
+        self.weight = nn.Parameter(torch.ones(num_features))
+        self.bias = nn.Parameter(torch.zeros(num_features))
+        self.register_buffer("running_mean", torch.zeros(num_features))
+        self.register_buffer("running_variance", torch.ones(num_features))
+        self.register_buffer("num_batches_tracked", torch.tensor(0))
+
+    def forward(self, x):
+        # x (batch, channels, height, width)
+
+        if self.training:
+            # Instructor comment says: "Using keepdim=True so we don't have to
+            # worry about broadasting them with x at the end". Meaning, keepdim
+            # gives us the channel averages in the shape of [1, 3, 1, 1]
+            # (rather than [3]), so that it auto-broadcasts when we say
+            # `x − mean` later.
+            num_channels = len(x[0])
+            assert len(x.shape) == 4, x.shape
+            mean = torch.mean(x, dim=(0, 2, 3), keepdim=True)
+            assert mean.shape == (1, x.shape[1], 1, 1)
+            variance = torch.var(x, dim=(0, 2, 3), unbiased=False, keepdim=True)
+            assert variance.shape == (1, x.shape[1], 1, 1)
+
+            self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean.squeeze()
+            self.running_var = (1 - self.momentum) * self.running_var + self.momentum * var.squeeze()
+            self.num_batches_tracked += 1
+        else:
+            # x could just be (channels, height, width) here apparently??
+            #
+            # More broastcast shaping; the instructor's solution uses `einops`,
+            # which I continue to bounce off of because I'm retarded
+            mean = self.running_mean.reshape(1, len(self.running_mean), 1, 1)
+            variance = self.running_variance.reshape(1, len(self.running_variance), 1, 1)
+
+        # more broadcast shaping, it seems!
+        weight = self.weight.reshape(1, len(self.weight), 1, 1)
+        bias = self.bias.reshape(1, len(self.bias), 1, 1)
+
+        # We normalize, but there's a learnable scale/shift that will get hit
+        # by gradients during backprop. (I guess some scalings decrease loss
+        # more than others?)
+        return ((x - mean) / torch.sqrt(variance + self.eps)) * weight + bias
+
 
 class AveragePool(nn.Module):
     def forward(self, x):
         return torch.mean(x, dim=(2, 3))
 
 
-# Implementing Resnet looks intimidating!!
+# Implementing Resnet looks intimidating, but we need to do it in order to
+# become stronger! (Also, it shouldn't rationally be intimidating—it's just
+# plugging lego bricks together, like all modern programming.)
+
+
+# I missed a couple kwargs at first, but otherwise this looks like the instructor's solution.
+class ResidualBlock(nn.Module):
+    def __init__(self, in_features, out_features, first_stride=1):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.left = nn.Sequential(
+            Conv2d(in_features, out_features, 3, stride=first_stride, padding=1),
+            BatchNorm2d(out_features),
+            ReLU(),
+            Conv2d(out_features, out_features, 3, stride=1, padding=1),
+            BatchNorm2d(out_features),
+        )
+        if first_stride > 1:
+            self.right = nn.Sequential(
+                # changed from `padding=1` while debugging
+                Conv2d(in_features, out_features, 1, stride=first_stride, padding=0),
+                BatchNorm2d(out_features),
+            )
+        else:
+            self.right = nn.Identity()
+
+        self.final_relu = ReLU()
+
+    def forward(self, x):
+        left = self.left(x)
+        right = self.right(x)
+        return self.final_relu(left + right)
+
+
+# This one is also easy.
+class BlockGroup(nn.Module):
+    def __init__(self, n_blocks, in_features, out_features, first_stride=1):
+        super().__init__()
+        self.blocks = nn.Sequential(
+            *(
+                [ResidualBlock(in_features, out_features, first_stride=first_stride)] +
+                [ResidualBlock(out_features, out_features) for _ in range(n_blocks - 1)]
+            )
+        )
+
+    def forward(self, x):
+        return self.blocks(x)
+
+
+# Corrected a few mistakes from instructor's solution, but overall mostly straightforward.
+#
+# There are a few more errors when I try to load the canonical weights.
+#
+# RuntimeError: Error(s) in loading state_dict for ResNet34:
+# 	size mismatch for block_groups.1.blocks.0.right.0.weight: copying a param with shape torch.Size([128, 64, 1, 1]) from checkpoint, the shape in current model is torch.Size([128, 64, 3, 3]).
+# 	size mismatch for block_groups.2.blocks.0.right.0.weight: copying a param with shape torch.Size([256, 128, 1, 1]) from checkpoint, the shape in current model is torch.Size([256, 128, 3, 3]).
+# 	size mismatch for block_groups.3.blocks.0.right.0.weight: copying a param with shape torch.Size([512, 256, 1, 1]) from checkpoint, the shape in current model is torch.Size([512, 256, 3, 3]).
+
+
+class ResNet34(nn.Module):
+    def __init__(
+        self,
+        n_blocks_per_group=[3, 4, 6, 3],
+        out_features_per_group=[64, 128, 256, 512],
+        first_strides_per_group=[1, 2, 2, 2],
+        n_classes=1000,
+    ):
+        super().__init__()
+        in_features_per_group = [64] + out_features_per_group[:3]
+
+        self.early_layers = nn.Sequential(
+            # Kind of confused by in-channels=3, out-channels=64? Are three
+            # "colors" being processed into a significantly larger number of
+            # "features"?
+            Conv2d(3, 64, 7, stride=2, padding=3),
+            BatchNorm2d(64),
+            ReLU(),
+            MaxPool2d(3, stride=2),
+        )
+        self.block_groups = nn.Sequential(*[
+            BlockGroup(n_blocks, in_features, out_features, first_stride)
+            for n_blocks, in_features, out_features, first_stride
+            in zip(n_blocks_per_group, in_features_per_group, out_features_per_group, first_strides_per_group)
+        ])
+        self.later_layers = nn.Sequential(
+            AveragePool(),
+            Flatten(),
+            Linear(512, n_classes),
+        )
+
+    def forward(self, x):
+        return self.later_layers(self.block_groups(self.early_layers(x)))
+
+
+# Then the course gives us some code to load the canonical RestNet34 weights
+# into the code we just wrote and do some predictions.
+
+my_resnet = ResNet34()
+
+def copy_weights(my_resnet, pretrained_resnet):
+    my_dict = my_resnet.state_dict()
+    pretrained_dict = pretrained_resnet.state_dict()
+    assert len(my_dict) == len(pretrained_dict), "Mismatching state dictionaries."
+
+    state_dict_to_load = {
+        my_key: pretrained_value
+        for (my_key, my_value), (pretrained_key, pretrained_value) in zip(my_dict.items(), pretrained_dict.items())
+    }
+
+    my_resnet.load_state_dict(state_dict_to_load)
+
+    return my_resnet
+
+from torchvision import models
+pretrained_resnet = models.resnet34(weights=models.ResNet34_Weights.IMAGENET1K_V1)
+my_resnet = copy_weights(my_resnet, pretrained_resnet)
+
+import json
+import os
+import pathlib
+from PIL import Image
+from torchvision import transforms
+
+chapter_directory = pathlib.Path(os.path.expanduser('~')) / "Code" / "ARENA_2.0" / "chapter0_fundamentals" / "exercises" / "part3_resnets"
+image_directory = chapter_directory / "resnet_inputs"
+imagenet_labelfile = chapter_directory / "imagenet_labels.json"
+
+image_filenames = [
+    "chimpanzee.jpg",
+    "golden_retriever.jpg",
+    "platypus.jpg",
+    "frogs.jpg",
+    "fireworks.jpg",
+    "astronaut.jpg",
+    "iguana.jpg",
+    "volcano.jpg",
+    "goofy.jpg",
+    "dragonfly.jpg",
+]
+
+images = [Image.open(image_directory / filename) for filename in image_filenames]
+
+IMAGE_SIZE = 224
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
+
+IMAGENET_TRANSFORM = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+    transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+])
+
+prepared_images = torch.stack([IMAGENET_TRANSFORM(img) for img in images], dim=0)
+
+assert prepared_images.shape == (len(images), 3, IMAGE_SIZE, IMAGE_SIZE)
+
+
+with open(imagenet_labelfile) as f:
+    imagenet_labels = list(json.load(f).values())
+
+for filename, img in zip(image_filenames, prepared_images):
+    my_resnet.eval()
+    predictions = my_resnet(img)
+    point_prediction = predictions.argmax().item()
+    print(filename, "|" , imagenet_labels[point_prediction], "|", predictions[0][point_prediction].item())
+
+# Output—
+#
+# chimpanzee.jpg | chimpanzee, chimp, Pan troglodytes | 19.332378387451172
+# golden_retriever.jpg | golden retriever | 12.240525245666504
+# platypus.jpg | platypus, duckbill, duckbilled platypus, duck-billed platypus, Ornithorhynchus anatinus | 17.8731632232666
+# frogs.jpg | toyshop | 9.811150550842285
+# fireworks.jpg | fountain | 12.617237091064453
+# astronaut.jpg | liner, ocean liner | 9.924823760986328
+# iguana.jpg | common iguana, iguana, Iguana iguana | 18.734634399414062
+# volcano.jpg | volcano | 23.102157592773438
+# goofy.jpg | binoculars, field glasses, opera glasses | 9.237372398376465
+# dragonfly.jpg | banana | 7.265051364898682
