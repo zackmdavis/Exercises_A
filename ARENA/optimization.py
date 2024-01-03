@@ -70,6 +70,14 @@ import torch
 # This theory is strengthened by the fact that when I run one optimizer step
 # with both my solution and the instructor solution locally, and compare the
 # `gs`es, everything matches.
+#
+# Comparing my original solution and the instructor's solution in detail,
+# another maybe-superficial difference is that they didn't have a separate `b`
+# tensor for the momentum; they just use `self.gs` the whole way through
+# (unlike the PyTorch docs pseudocode) ...
+#
+# I eventually fixed my code, following the instructor's solution (last error
+# was my indentation being wrong—oops!
 
 class SGD:
     def __init__(self, params, lr, momentum=0.0, weight_decay=0.0):
@@ -80,7 +88,6 @@ class SGD:
 
         self.t = 0
         self.gs = [torch.zeros_like(p) for p in self.params]
-        self.bs = [torch.zeros_like(p) for p in self.params]
 
     def zero_grad(self) -> None:
         for param in self.params:
@@ -88,33 +95,95 @@ class SGD:
 
     @torch.inference_mode()
     def step(self):
-        # We assume that someone has already called `.backward()`, which sets
-        # `.grad` on the parameters.
-        #
-        # g_t ​← ∇θf_t(θ_{t−1})
-        self.gs = [p.grad for p in self.params]
-
-        if self.lmbda != 0:
-            # Then we apply weight decay.
+        for i, (g, p) in enumerate(zip(self.gs, self.params)):
+            # We assume that someone has already called `.backward()`, which sets
+            # `.grad` on the parameters.
             #
-            # g_t ← g_t ​+ λθ_{t−1}
-            for gi, p in zip(self.gs, self.params):
-                gi += self.lmbda * p
-        if self.mu != 0:
-            # Then we apply momentum.
-            if self.t > 0:
-                # b_t ​← μb_{t−1} ​+ (1−τ)g_t
-                # (we're not doing τ-dampening in this exercise)
-                self.bs = self.gs + self.mu * self.bs
-            else:
-                # b_t ​← g_t
-                self.bs = self.gs
+            # g_t ​← ∇θf_t(θ_{t−1})
+            next_g = p.grad
+            if self.lmbda != 0:
+                # Then we apply weight decay.
+                #
+                # g_t ← g_t ​+ λθ_{t−1}
+                next_g += self.lmbda * p
+            if self.mu != 0:
+                # Then we apply momentum.
+                if self.t > 0:
+                    # b_t ​← μb_{t−1} ​+ (1−τ)g_t
+                    # (we're not doing τ-dampening in this exercise)
+                    next_g += self.mu * g
 
-        # θ_t​ ← θ_{t−1} − γg_t
-        for bi, pi in zip(self.bs, self.params):
-            pi -= self.lr * bi
+            # θ_t​ ← θ_{t−1} − γg_t
+            self.params[i] -= self.lr * next_g
+            self.gs[i] = next_g
 
         self.t += 1
 
     def __repr__(self) -> str:
         return "SGD(lr={}, momentum={}, weight_decay={})".format(self.lr, self.mu, self.lmbda)
+
+# The Colab says there are diminishing marginal returns from implementing
+# RMSprop, Adam, and AdamW ...
+
+# There's an exercise to rewrite the SGD exercise to allow parameter groups,
+# which feels like a great way to atone for not getting that right the first time
+# and needing to look at the instructor's solution.
+
+# I implement, and after some trivial fixes (missing `self` arg, &c.) ... the tests
+# fail numerically again (greatest absolute difference 0.00639).
+#
+# This is a bit disheartening. 😰 💔
+
+class GroupCapableSGD:
+    def __init__(self, params, lr=None, momentum=0.0, weight_decay=0.0):
+        params = list(params)  # collect if it's a generator &c.
+        self.param_groups = []
+        if all(isinstance(param, torch.nn.Parameter) for param in params):
+            assert lr is not None
+            self.add_parameter_group(params, lr, momentum, weight_decay)
+        else:
+            for param_group in params:
+                self.add_parameter_group(
+                    param_group['params'],
+                    param_group.get('lr', lr),
+                    param_group.get('momentum', momentum),
+                    param_group.get('weight_decay', weight_decay)
+                )
+
+        self.t = 0
+
+    def add_parameter_group(self, params, lr, momentum, weight_decay):
+        assert lr is not None
+
+        for existing_group in self.param_groups:
+            if params == existing_group['params']:
+                raise ValueError("no parameters can appear in more than one group")
+
+        self.param_groups.append(
+            {
+                'params': params,
+                'lr': lr,
+                'momentum': momentum,
+                'weight_decay': weight_decay,
+                'gs': [torch.zeros_like(p) for p in params]
+             }
+        )
+
+    def zero_grad(self):
+        for param_group in self.param_groups:
+            for param in param_group['params']:
+                param.grad = None
+
+    @torch.inference_mode()
+    def step(self):
+        for param_group in self.param_groups:
+            for i, (g, p) in enumerate(zip(param_group['gs'], param_group['params'])):
+                next_g = p.grad
+                if param_group['weight_decay'] != 0:
+                    next_g += param_group['weight_decay'] * p
+                if param_group['momentum'] != 0:
+                    if self.t > 0:
+                        next_g += param_group['momentum'] * g
+                param_group['params'][i] -= param_group['lr'] * next_g
+                param_group['gs'][i] = next_g
+            self.t += 1
