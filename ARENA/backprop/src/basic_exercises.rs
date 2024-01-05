@@ -15,7 +15,6 @@ fn log_back(grad_out: Array<f64, Ix2>, _out: Array<f64, Ix2>, x: Array<f64, Ix2>
 // know about `.skip()`.) A cool but somewhat alienating experience ... and the
 // implications!
 fn unbroadcast(broadcasted: &Array<f64, IxDyn>, original: &Array<f64, IxDyn>) -> Array<f64, IxDyn> {
-    // Step 1: Compare shapes and determine which dimensions have been broadcasted
     let broadcast_shape = broadcasted.shape();
     let original_shape = original.shape();
     let mut axes_to_sum = Vec::new();
@@ -44,18 +43,43 @@ fn unbroadcast(broadcasted: &Array<f64, IxDyn>, original: &Array<f64, IxDyn>) ->
 }
 
 
-fn multiply_back0(grad_out: &ArrayD<f64>, _out: &ArrayD<f64>, _x: &ArrayD<f64>, y: &ArrayD<f64>) -> ArrayD<f64> {
-    let raw_gradient = grad_out * y;
-    unbroadcast(&raw_gradient, y)
-}
+// Tests on multiply_back are failing where I get [12.0] but the solutions
+// expect [4.0, 4.0, 4.0]. Looking at the instructor's solution for
+// `unbroadcast`, it looks like we're not supposed to remove dimensions that
+// were originally 1 (as contasted to the prepended 1 dimensions). Now that
+// it's been pointed out, that makes sense!
+//
+// Let's add a test to `test_unbroadcast`. (And then we could PR that against
+// the course later tonight?!—for the glory.) Except, wait—the test already
+// covers a shape [2, 1, 3] vs. shape [5, 1, 2, 4, 3] case! That should be
+// sufficient.
 
+// Think step-by-step.
+//
+// let actual = multiply_back0(&grad_out, &c, &a, &b);
+// let expected = arr1(&[4.0, 4.0, 4.0]).into_dyn();
+//
+// `multiply_back0` first calls `grad_out * y`.
+// `grad_out` is 1×3; `y` is `b` which is 1×1 ... which makes it seem like
+// `unbroadcast` is locally doing the right thing here?!
+//
+// The canonical tests expect `multiply_back0(grad_out, c, a, b)` to give [4.0,
+// 4.0, 4.0], but `multiply_back1(grad_out, c, a, b)` (same args, same order)
+// to give [12.0].
+//
+// Wait ... the instructor's solution actually gives `multiply_back0` as
+// `unbroadcast(y * grad_out, x)`; I have x totally unused. That should have
+// been a red flag (the unused output)—and then the tests pass. OK.
 
-fn multiply_back1(grad_out: &ArrayD<f64>, _out: &ArrayD<f64>, x: &ArrayD<f64>, _y: &ArrayD<f64>) -> ArrayD<f64> {
-    let raw_gradient = grad_out * x;
+fn multiply_back0(grad_out: &ArrayD<f64>, _out: &ArrayD<f64>, x: &ArrayD<f64>, y: &ArrayD<f64>) -> ArrayD<f64> {
+    let raw_gradient = y * grad_out;
     unbroadcast(&raw_gradient, x)
 }
 
-
+fn multiply_back1(grad_out: &ArrayD<f64>, _out: &ArrayD<f64>, x: &ArrayD<f64>, y: &ArrayD<f64>) -> ArrayD<f64> {
+    let raw_gradient = x * grad_out;
+    unbroadcast(&raw_gradient, y)
+}
 
 #[test]
 fn test_log_back() {
@@ -72,21 +96,18 @@ fn test_log_back() {
 
 #[test]
 fn test_unbroadcast() {
-    // Test case 1
     let small = Array::ones(IxDyn(&[2, 1, 3]));
     let large = small.broadcast(IxDyn(&[5, 1, 2, 4, 3])).unwrap().to_owned();
     let out = unbroadcast(&large, &small);
     assert_eq!(out.shape(), small.shape());
     assert!(out.iter().all(|&x| (x - 20.0).abs() < 1e-6));
 
-    // Test case 2
     let small = Array::ones(IxDyn(&[2, 1, 3]));
     let large = small.broadcast(IxDyn(&[5, 1, 2, 1, 3])).unwrap().to_owned();
     let out = unbroadcast(&large, &small);
     assert_eq!(out.shape(), small.shape());
     assert!(out.iter().all(|&x| (x - 5.0).abs() < 1e-6));
 
-    // Test case 3
     let small = Array::ones(IxDyn(&[2, 1, 3]));
     let large = small.broadcast(IxDyn(&[2, 4, 3])).unwrap().to_owned();
     let out = unbroadcast(&large, &small);
@@ -96,13 +117,18 @@ fn test_unbroadcast() {
 
 #[test]
 fn test_multiply_back() {
-    // Test case 1
     let a = arr1(&[1.0, 2.0, 3.0]).into_dyn();
     let b = arr1(&[2.0]).into_dyn();
     let c = &a * &b;
+
+    let expected_c: Array<f64, _> = arr1(&[2., 4., 6.]).into_dyn();
+    assert!(c.iter().zip(expected_c.iter()).all(|(&a, &e)| (a - e).abs() < 1e-6));
+
     let grad_out = arr1(&[2.0, 2.0, 2.0]).into_dyn();
+
     let actual = multiply_back0(&grad_out, &c, &a, &b);
     let expected = arr1(&[4.0, 4.0, 4.0]).into_dyn();
+    println!("{:?}\n{:?}", actual, expected);
     assert_eq!(actual.shape(), expected.shape());
     assert!(actual.iter().zip(expected.iter()).all(|(&a, &e)| (a - e).abs() < 1e-6));
 
@@ -112,7 +138,6 @@ fn test_multiply_back() {
     assert_eq!(actual.shape(), expected.shape());
     assert!(actual.iter().zip(expected.iter()).all(|(&a, &e)| (a - e).abs() < 1e-6));
 
-    // Test case 2
     let a = arr1(&[1.0, 2.0]).into_dyn();
     let b = arr2(&[[2.0, 3.0], [3.0, 4.0], [4.0, 5.0]]).into_dyn();
     let c = &a * &b;
