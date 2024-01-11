@@ -1,4 +1,5 @@
 import torch
+import einops
 from torch import nn
 
 # We start with some simple module implementations ...
@@ -30,7 +31,7 @@ class LeakyReLU(nn.Module):
 
 
 class Sigmoid(nn.Module):
-    def forward(self):
+    def forward(self, x):
         return torch.sigmoid(x)
 
 
@@ -53,6 +54,36 @@ def conv2d_minimal(x, weights):
     x_strided = x.as_strided(size=x_new_shape, stride=x_new_stride)
 
     return einops.einsum(x_strided, weights, "b ic oh ow kh kw, oc ic kh kw -> b oc oh ow")
+
+
+def pad2d(x, left, right, top, bottom, pad_value):
+    '''Return a new tensor with padding applied to the edges.
+    x: shape (batch, in_channels, height, width), dtype float32
+    Return: shape (batch, in_channels, top + height + bottom, left + width + right)
+    '''
+    B, C, H, W = x.shape
+    output = x.new_full(size=(B, C, top + H + bottom, left + W + right), fill_value=pad_value)
+    output[..., top : top + H, left : left + W] = x
+    return output
+
+
+
+def fractional_stride_2d(x, stride_h, stride_w):
+    '''
+    Same as fractional_stride_1d, except we apply it along the last 2 dims of x (width and height).
+    '''
+    batch, in_channels, height, width = x.shape
+    width_new = width + (stride_w - 1) * (width - 1)
+    height_new = height + (stride_h - 1) * (height - 1)
+    x_new_shape = (batch, in_channels, height_new, width_new)
+
+    # Create an empty array to store the spaced version of x in.
+    x_new = torch.zeros(size=x_new_shape, dtype=x.dtype, device=x.device)
+
+    x_new[..., ::stride_h, ::stride_w] = x
+
+    return x_new
+
 
 
 def force_pair(v):
@@ -88,8 +119,8 @@ class ConvTranspose2d(nn.Module):
         padding_h, padding_w = force_pair(self.padding)
 
         batch, ic, height, width = x.shape
-        ic_2, oc, kernel_height, kernel_width = self.weights.shape
-        assert ic == ic_2, f"in_channels for x and weights don't match up. Shapes are {x.shape}, {self.weights.shape}."
+        ic_2, oc, kernel_height, kernel_width = self.weight.shape
+        assert ic == ic_2, f"in_channels for x and weights don't match up. Shapes are {x.shape}, {self.weight.shape}."
 
         # Apply spacing
         x_spaced_out = fractional_stride_2d(x, stride_h, stride_w)
@@ -101,7 +132,7 @@ class ConvTranspose2d(nn.Module):
         x_mod = pad2d(x_spaced_out, left=pad_w_actual, right=pad_w_actual, top=pad_h_actual, bottom=pad_h_actual, pad_value=0)
 
         # Modify weights
-        weights_mod = einops.rearrange(self.weights.flip(-1, -2), "i o h w -> o i h w")
+        weights_mod = einops.rearrange(self.weight.flip(-1, -2), "i o h w -> o i h w")
 
         # Return the convolution
         return conv2d_minimal(x_mod, weights_mod)
@@ -252,9 +283,12 @@ class Generator(nn.Module):
 
 import pathlib
 
+from tqdm import tqdm
+from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
 
-def get_dataset(dataset, train):
+
+def get_dataset(dataset, train=True):
     assert dataset in ["MNIST", "CELEB"]
 
     if dataset == "CELEB":
@@ -326,4 +360,156 @@ class DCGAN(nn.Module):
 
 # (I also set the slope on my discriminator LeakyReLUs to 0.2 to match the solution.)
 
-# Now to write the training loop! ... tomorrow?
+# Now to write the training loop!
+
+
+import time
+import numpy as np
+from PIL import Image
+
+class DCGANTrainer:
+    def __init__(
+            self,
+            latent_dim_size=100,
+            hidden_channels=[128, 256, 512],
+            dataset="CELEB",
+            batch_size=16,
+            epochs=3,
+            lr=0.0002,
+            betas=(0.5, 0.999),
+            seconds_between_evals=60,
+    ):
+        self.latent_dim_size = latent_dim_size
+        self.hidden_channels = hidden_channels
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.epochs = epochs
+        self.lr = lr
+        self.betas = betas
+        self.seconds_between_evals = seconds_between_evals
+
+        self.criterion = nn.BCELoss()
+
+        self.trainset = get_dataset(self.dataset)
+        self.trainloader = DataLoader(self.trainset, batch_size=self.batch_size, shuffle=True)
+
+        batch, img_channels, img_height, img_width = next(iter(self.trainloader))[0].shape
+        assert img_height == img_width
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.model = DCGAN(
+            self.latent_dim_size,
+            img_height,
+            img_channels,
+            self.hidden_channels,
+        ).to(self.device).train()
+
+        self.generator_optimizer = torch.optim.Adam(
+            self.model.generator.parameters(), lr=self.lr, betas=self.betas, maximize=True
+        )
+        self.discriminator_optimizer = torch.optim.Adam(
+            self.model.discriminator.parameters(), lr=self.lr, betas=self.betas, maximize=True
+        )
+
+
+    def training_step_discriminator(self, real, fake):
+        # So what does a training step look like? We're trying to maximize
+        # log(D(x)) + log(1-D(G(z))), which entails calculating it, then the
+        # "invoke backprop, step the optimizer, zero the gradients" routine.
+        #
+        # I drafted the code that makes sense to me, but it's probably wrong
+        # (`1-fake_p` is likely a type error, if the subtrahend needs to be a
+        # gradient-bearing PyTorch object rather than an int, and presumably we
+        # should be using the `self.criterion` set in the skeleton.
+        real_p = self.model.discriminator(real)
+        fake_p = self.model.discriminator(fake)
+        u = (torch.log(real_p) + torch.log(1-fake_p)).sum()
+        u.backward()
+        self.discriminator_optimizer.step()
+        self.discriminator_optimizer.zero_grad()
+        return u
+
+    def training_step_generator(self, fake):
+        p = self.model.discriminator(fake)
+        u = torch.log(p).sum()
+        u.backward()
+        self.generator_optimizer.step()
+        self.generator_optimizer.zero_grad()
+        return u
+
+    @torch.inference_mode()
+    def evaluate(self):
+        self.model.generator.eval()
+        latent_noise = torch.randn(4, self.latent_dim_size).to(self.device)
+
+        raw_samples = self.model.generator(latent_noise)
+        # thanks to GPT-4 for image-saving snippet
+        samples = (raw_samples - raw_samples.min()) / (raw_samples.max() - raw_samples.min())
+        samples = (samples * 255).byte()
+        image_array = np.transpose(samples.cpu().numpy(), (0, 2, 3, 1))
+        # Save each image in the batch
+        for i in range(image_array.shape[0]):
+            img = Image.fromarray(image_array[i], 'RGB')
+            img.save("step{}_{}.png".format(self.step, i))
+        print("saved evaluation images for step {}!".format(self.step))
+
+        self.model.generator.train()
+
+
+    # Following the skeleton code.
+    def train(self):
+        self.step = 0
+        last_log_time = time.time()
+
+        for epoch in range(self.epochs):
+            progress_bar = tqdm(self.trainloader, total=len(self.trainloader))
+            for real, _label in progress_bar:
+                latent_noise = torch.randn(self.batch_size, self.latent_dim_size).to(self.device)
+                real = real.to(self.device)
+                fake = self.model.generator(latent_noise)
+
+                # `detach` returns a new non-gradient-tracking tensor (sharing storage with the original)
+                u_discriminator = self.training_step_discriminator(real, fake.detach())
+                u_generator = self.training_step_generator(fake)
+
+                self.step += real.shape[0]
+                progress_bar.set_description(
+                    "{}, disc_u={:.4f}, gen_u={:.4f}, examples_seen={}".format(
+                        epoch, u_discriminator, u_generator, self.step
+                    )
+                )
+
+                if time.time() - last_log_time > self.seconds_between_evals:
+                    last_log_time = time.time()
+                    self.evaluate()
+
+
+# After some routine error-chasing, it looks like ... I don't have the hardware?
+#
+# `torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB
+# (GPU 0; 3.81 GiB total capacity; 1.92 GiB already allocated; 1.67 GiB free;
+# 2.02 GiB reserved in total by PyTorch) If reserved memory is >> allocated
+# memory try setting max_split_size_mb to avoid fragmentation.  See
+# documentation for Memory Management and PYTORCH_CUDA_ALLOC_CONF`
+#
+# Reducing batch size from 64 to 16 seems to have circumvented the memory
+# issue. Next error was `RuntimeError: grad can be implicitly created only for
+# scalar outputs.` GPT-4 suggests summing or averaging over the batch, so I
+# slap a `.mean()` on my `u` expressions. (Oh, but maybe I should use `sum()` to
+# try training faster?)
+#
+# And we're training!! I'm not sure whether these u numbers (I'm not calling
+# them "loss" if we're doing gradient ascent) means we're on track; I need to
+# implement `evaluate` to show the images.
+#
+# The solutions are using Weights and Biases (wandb), which section I skipped
+# because signing up for an account on a third-party site is annoying—I assume
+# I can just write the images locally.
+
+# Preliminary results looking OK!
+
+
+
+if __name__ == "__main__":
+    DCGANTrainer().train()
