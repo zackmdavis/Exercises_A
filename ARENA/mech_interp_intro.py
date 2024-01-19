@@ -136,4 +136,63 @@ def induction_score_hook(pattern, hook):
 # that to look up the token that came after that previous token earlier? This
 # is a bit vague, though.
 
-# TODO: continue at "Refresher—QK and OV circuits"
+# I think I need to do some slow, line-by-line focus to really get this (and
+# get the model to play with locally rather than being chained the Colab).
+
+# "Head 0.7 is a previous token head (the QK-circuit ensures it always attends
+# to the previous token)." What does that mean, in detail?
+
+# It means that the attention pattern has a diagonal streak "one below" the
+# main diagonal. So when "position A attends to position B", then A is the row
+# and B is the column: that's the convention that would make a "previous token
+# head" be the below-main diagonal (with e.g., the zero-index 1st row matching
+# with the 0th column).
+
+# GPT-4 elaborates: "In these matrices, each row corresponds to a query (the
+# token considering others) and each column corresponds to a key (the token
+# being considered)."
+
+# Next step: "The OV circuit of head 0.7 writes a copy of the previous token in
+# a different subspace to the one used by the embedding." What does that mean?
+# That Q, K, and V happen to be such that, when we take V · Softmax(K^⊤ · Q),
+# the position for the nth token ends up encoding information about what the
+# n–1th token was.
+
+# Next step: "The output of head 0.7 is used by the key input of head 1.10 via
+# K-Composition to attend to 'the source token whose previous token is the
+# destination token'."
+
+# Suppose (following the diagram) that the n-1th token was `D`, and the nth
+# token was `urs`. So the nth position in the output of the first layer ends up
+# encoding the information "the previous token was D" somehow (in some
+# subspace; the embedding space is high-dimensional and can be assumed to have
+# plenty of room for whatever we want to store).
+
+# So then when `D` appears again in the input at a later position (call it k),
+# the attention pattern for head 1.10 can focus on positions where "the
+# previous token was D" has been stored, and look up what the actual token was
+# at that time `urs`, and predict that for the k+1th position?
+
+# This still feels handwavy! How does it "focus on positions where 'the
+# previous token was D' has been stored, and how can it looks up what the token
+# at that time was? Where is that information actually stored?
+
+# OK, we get some quiz questions: "what is the interpretation of each of the
+# following matrices? [...]  If you're confused, you might want to read the
+# answers to the first few questions and then try the later ones. [...]  you
+# should describe the type of input it takes, and what the outputs represent."
+
+# W^h_OV
+# I reply: the OV circuit for the hth head. Which means ...?
+# Instructor's answer (my paraphase): it has dimensions d_model, d_model (the
+# emedding dimensionality). It represents the flow of info from source to
+# destination. If x is a "source" vector in the residual stream (which has
+# sequence-length vectors), then xW^h_OV is the destination.
+
+# W_E W^h_{OV} W^U
+# I reply: this is the embedding, composed with the OV circuit, composed with
+# the unembedding. The input and output both have the embedding
+# dimensionality. I'd say that this is what the model outputs, but I'm not sure
+# how the QK circuit fits in?
+
+# TODO—continue with "Reverse-Engineering Circuits"
