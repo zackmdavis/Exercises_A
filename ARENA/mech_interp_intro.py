@@ -98,4 +98,42 @@ def run_and_cache_model_repeated_tokens(model, seq_len, batch=1):
 # Instructor's answer confirms (and notes that head 6 has a much weaker
 # induction stripe).
 
-# TODO continue—"calculate induction scores with hooks" and "find induction heads in GPT2-small"
+# How do I take average of a diagonal over a batch? I think `dim1=2, dim2=3`
+# (these kwargs having been mentioned by the text as potentially useful) should
+# give me the diagonal over just the last two dimensions ... and it gives me a
+# batch of those, I guess?
+
+# After some thought, I got it!
+# You can still see my Python normie tendencies (using a for loop instead of
+# tensor index magic), but getting the job done is paramount.
+def induction_score_hook(pattern, hook):
+    (batch, headcount, dest_posns, source_posns) = pattern.shape
+
+    diagonals = pattern.diagonal(offset=-(seq_len - 1), dim1=2, dim2=3)
+    assert diagonals.shape[:2] == (batch, headcount)
+    for head in range(headcount):
+      induction_score_store[hook.layer(), head] = diagonals[:, head, ...].mean()
+# Instructor's solution was
+    # induction_stripe = pattern.diagonal(dim1=-2, dim2=-1, offset=1-seq_len)
+    # induction_score = einops.reduce(induction_stripe, "batch head_index position -> head_index", "mean")
+    # induction_score_store[hook.layer(), :] = induction_score
+
+
+# We are asked why second-layer heads would have higher logit contributions
+# than first-layer, and hinted to think about what the attributions mean in
+# terms of paths.
+#
+# I reply ... um, because the second layer of heads incorporates the inputs of
+# the first layer?? (Instructor's answer is broadly similar?—"the attributions
+# for layer-1 heads will involve not only the single-head paths through those
+# attention heads, but also the 2-layer compositional paths through heads in
+# layer 0 and layer 1".)
+
+# We're asked to summarize how the induction circuit in our simple model must
+# work, given our logit-attribution and ablation findings.
+#
+# I reply: 0.7 is "attending to the previous token", and 1.4 and 1.10 and using
+# that to look up the token that came after that previous token earlier? This
+# is a bit vague, though.
+
+# TODO: continue at "Refresher—QK and OV circuits"
