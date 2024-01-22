@@ -1,6 +1,6 @@
 import torch
 
-from transformer_lens import HookedTransformer
+from transformer_lens import HookedTransformer, FactoredMatrix
 
 gpt2_small = HookedTransformer.from_pretrained("gpt2-small")
 
@@ -56,9 +56,13 @@ gpt2_small = HookedTransformer.from_pretrained("gpt2-small")
 
 # There's an exercise to see the model do better on predicting the second half of a random sequence ...
 
+
 def generate_repeated_tokens(model, seq_len, batch=1):
     sequence = [random.randint(1, 40000) for _ in range(seq_len)]
-    return torch.tensor([[50256] + sequence * 2] * batch).to(next(model.parameters()).device)
+    return torch.tensor([[50256] + sequence * 2] * batch).to(
+        next(model.parameters()).device
+    )
+
 
 # You can still see me thinking like a normie Python programmer in the
 # above. The instructor's solution uses more local jargon—
@@ -195,4 +199,43 @@ def induction_score_hook(pattern, hook):
 # dimensionality. I'd say that this is what the model outputs, but I'm not sure
 # how the QK circuit fits in?
 
-# TODO—continue with "Reverse-Engineering Circuits"
+# Exercise—compute OV circuit for 1.4
+#
+# My guess was `FactoredMatrix(model.W_E, model.W_V[layer][head_index]) @
+# model.W_U`, but that doesn't even shape-check, and anyway it was a retarded
+# guess because of course the OV circuit is also going to use W_O
+
+
+# Getting a CUDA error running this in Colab—but it also occurs when I run the
+# instructor's solution!—guess I need to gear up locally? (The Colab was nice
+# for having the tests configured.)
+def top_1_acc(full_OV_circuit, batch_size=1000):
+    indices = torch.randint(0, model.cfg.d_vocab, (batch_size,))
+    hits = 0
+    # I'm still being a Python normie with these loops, I guess?!
+    argmaxes = full_OV_circuit[indices, indices].AB.argmax(dim=0)
+    for i, argmax in enumerate(argmaxes):
+        if i == argmax:
+            hits += 1
+    return hits / len(argmaxes)
+
+
+# But when I run locally, I'm getting much better results?! (Course text says
+# "This should return about 30.79%"; I'm getting around 75%.)
+
+# Summing `FactoredMatrix`es doesn't work, but the diagram suggests that we
+# should be concatting them?
+
+def effective_circuit():
+    return (
+        model.W_E @
+        FactoredMatrix(
+            torch.concat((model.W_V[1, 4], model.W_V[1, 10]), dim=1),
+            torch.concat((model.W_O[1, 4], model.W_O[1, 10]), dim=0)
+        ) @
+        model.W_U
+    )
+
+
+def positional_pattern():
+    return model.W_pos @ model.W_Q[0, 7] @ model.W_K[0, 7].T @ model.W_pos.T
