@@ -10,7 +10,21 @@
 # practicum)
 
 import torch
+
+import numpy as np
+
 from torch import nn
+from tqdm import tqdm
+
+
+def linear_lr(step, steps):
+    return (1 - (step / steps))
+
+def constant_lr(*_):
+    return 1.0
+
+def cosine_decay_lr(step, steps):
+    return np.cos(0.5 * np.pi * step / (steps - 1))
 
 
 class Model(nn.Module):
@@ -32,15 +46,15 @@ class Model(nn.Module):
 
         if feature_probability is None:
             feature_probability = torch.ones(())
-        else:
+        elif isinstance(feature_probability, float):
             feature_probability = torch.tensor(feature_probability)
         self.feature_probability = feature_probability.to("cuda")
 
         if importance is None:
             importance = torch.ones(())
-        else:
+        elif isinstance(importance, float):
             torch.tensor(importance)
-        self.importance = importance.to("cuda").broadcast_to(feature_count)
+        self.importance = importance.to("cuda")
 
         # canoncial skeleton code also did some broadcasting—we'll probably see about adapting that later
 
@@ -66,6 +80,77 @@ class Model(nn.Module):
 
         return torch.where(feature_present, features, 0.0)
 
-
     def loss(self, x, out):
-        ...
+        batch_size = x.shape[0]
+        return (1/(self.feature_count * batch_size)) * torch.sum(self.importance * (x - out)**2)
+
+    # skeleton code
+    def optimize(
+        self,
+        batch_size=1024,
+        steps=10_000,
+        log_freq=100,
+        lr=1e-3,
+        lr_scale=constant_lr,
+    ):
+        optimizer = torch.optim.Adam(list(self.parameters()), lr=lr)
+
+        progress_bar = tqdm(range(steps))
+
+        for step in progress_bar:
+            step_lr = lr * lr_scale(step, steps)
+            for group in optimizer.param_groups:
+                group['lr'] = step_lr
+
+            optimizer.zero_grad()
+            batch = self.generate_batch(batch_size)
+            out = self(batch)
+            loss = self.loss(out, batch)
+            loss.backward()
+            optimizer.step()
+
+            if step % log_freq == 0 or (step + 1 == steps):
+                progress_bar.set_postfix(loss=loss.item(), lr=step_lr)
+
+
+def experiment(instance_count=8, feature_count=5):
+    # features vary in importance within each instance
+    importance = (0.9 ** torch.arange(feature_count)).unsqueeze(0)
+    # sparsity varies over instances
+    feature_probability = 50 ** -torch.linspace(0, 1, instance_count)
+    instances = [Model(importance=importance, feature_probability=p) for _i, p in enumerate(feature_probability)]
+    for instance in instances:
+        instance.optimize(steps=4000)
+    return instances
+
+# The plotting code doesn't work in the terminal, which is disappointing. (I
+# guess ML culture really believes in Colabs?! Gross.)
+
+
+class NeuronModel(Model):
+    def __init__(self, feature_probability=None, importance=None):
+        super().__init__(feature_probability=feature_probability, importance=importance)
+
+    def forward(self, x):
+        h = self.relu((self.W @ x.T).T)
+        return self.relu((self.W.T @ h.T).T + self.b)
+
+
+# § Sparse Autoencoders in Toy Models
+
+# We are asked, "in the formulas above (in the "Problem setup" section), what
+# are the shapes of x, x', z, h, and h' ?"
+#
+# I'm inclined reply, x and x′ are (batch, feature_count), h and h′ are (batch,
+# hidden_count), and z is (n_hidden_ae,)?
+#
+# Self-followup question: no batch dimension for z because it's tracking
+# activations, not data? I'm not sure that makes sense.
+#
+# Instructor's solution says I was otherwise right, but that these all include
+# batch and instance dimensions.
+
+# TODO: implement the Autoencoder methods
+# Later, there's going to be resampling for dead neurons—suggesting a nice
+# bonus exercise of implementing ghost grads, which were just published the
+# other week (https://transformer-circuits.pub/2024/jan-update/index.html)
