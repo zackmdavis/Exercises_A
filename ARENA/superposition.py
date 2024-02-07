@@ -17,11 +17,16 @@ from torch import nn
 from tqdm import tqdm
 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 def linear_lr(step, steps):
-    return (1 - (step / steps))
+    return 1 - (step / steps)
+
 
 def constant_lr(*_):
     return 1.0
+
 
 def cosine_decay_lr(step, steps):
     return np.cos(0.5 * np.pi * step / (steps - 1))
@@ -82,7 +87,9 @@ class Model(nn.Module):
 
     def loss(self, x, out):
         batch_size = x.shape[0]
-        return (1/(self.feature_count * batch_size)) * torch.sum(self.importance * (x - out)**2)
+        return (1 / (self.feature_count * batch_size)) * torch.sum(
+            self.importance * (x - out) ** 2
+        )
 
     # skeleton code
     def optimize(
@@ -100,7 +107,7 @@ class Model(nn.Module):
         for step in progress_bar:
             step_lr = lr * lr_scale(step, steps)
             for group in optimizer.param_groups:
-                group['lr'] = step_lr
+                group["lr"] = step_lr
 
             optimizer.zero_grad()
             batch = self.generate_batch(batch_size)
@@ -118,10 +125,14 @@ def experiment(instance_count=8, feature_count=5):
     importance = (0.9 ** torch.arange(feature_count)).unsqueeze(0)
     # sparsity varies over instances
     feature_probability = 50 ** -torch.linspace(0, 1, instance_count)
-    instances = [Model(importance=importance, feature_probability=p) for _i, p in enumerate(feature_probability)]
+    instances = [
+        Model(importance=importance, feature_probability=p)
+        for _i, p in enumerate(feature_probability)
+    ]
     for instance in instances:
         instance.optimize(steps=4000)
     return instances
+
 
 # The plotting code doesn't work in the terminal, which is disappointing. (I
 # guess ML culture really believes in Colabs?! Gross.)
@@ -150,7 +161,76 @@ class NeuronModel(Model):
 # Instructor's solution says I was otherwise right, but that these all include
 # batch and instance dimensions.
 
-# TODO: implement the Autoencoder methods
-# Later, there's going to be resampling for dead neurons—suggesting a nice
-# bonus exercise of implementing ghost grads, which were just published the
-# other week (https://transformer-circuits.pub/2024/jan-update/index.html)
+
+class Autoencoder(nn.Module):
+    def __init__(
+        self,
+        input_dimensionality,
+        latent_dimensionality,
+        l1_coëfficient=0.5,
+        tied=False,
+        weight_normalizer_ε=1e-8,
+    ):
+        super().__init__()
+
+        self.l1_coëfficient = l1_coëfficient
+        self.tied = tied
+        self.weight_normalizer_ε = weight_normalizer_ε
+
+        self.encoder_weights = nn.Parameter(
+            nn.init.xavier_normal_(
+                torch.empty(input_dimensionality, latent_dimensionality)
+            )
+        )
+        if not tied:
+            self.decoder_weights = nn.Parameter(
+                nn.init.xavier_normal_(
+                    torch.empty(latent_dimensionality, input_dimensionality)
+                )
+            )
+
+        self.encoder_biases = nn.Parameter(torch.zeros(latent_dimensionality))
+        self.decoder_biases = nn.Parameter(torch.zeros(input_dimensionality))
+
+        self.to(device)
+
+    def normalize_and_return_decoder_weights(self):
+        # Docstring says "Normalization should be over the `n_input_ae`
+        # dimension, i.e. each feature should have a normalized decoder
+        # weight."
+        #
+        # "Normalizing over a dimension" means making them add up to one. I can
+        # do that one column at a time with `m[:, i] /= m[:, i].sum()` but
+        # presumably there's a more systematic way to do it (surely with
+        # einops). GPT-4 points out that the non-one-at-a-time method is just
+        # dividing by the sum-with-keepdims.
+        #
+        # But if the tied weights get transposed, then don't I have to
+        # normalize with respect to the other dimension (or do the
+        # normalization after the transpose)?
+        #
+        # if self.tied:
+        #     normalized = self.encoder_weights / (self.encoder_weights.sum(dim=1, keepdim=True)
+        #     return normalized.T
+        # else:
+        #     self.decoder_weights[:] = self.decoder_weights / self.decoder_weights.sum(dim=1, keepdim=True)
+        #     return self.decoder_weights
+        #
+        # Let's go with the instructor's version. ... except the instructor's
+        # version (adapted for my variable names) seems to have an error in the
+        # untied branch (saying `dim=2` when there is no dim 2). Changing to
+        # dim=1 resolves the error, but now summing along dim=0 doesn't give me
+        # 1—which is nuts, because we are, in fact, dividing by the norm.
+        #
+        # `dim=2` could be because of me ditching `n_instances`
+        if self.tied:
+            return self.encoder_weights.transpose(-1, -2) / (
+                self.encoder_weights.transpose(-1, -2).norm(dim=1, keepdim=True)
+                + self.weight_normalizer_ε
+            )
+        else:
+            self.decoder_weights.data = self.decoder_weights.data / (
+                self.decoder_weights.data.norm(dim=1, keepdim=True)
+                + self.weight_normalizer_ε
+            )
+        return self.decoder_weights
