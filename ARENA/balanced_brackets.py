@@ -246,3 +246,89 @@ def get_pre_final_ln_dir(model, data):
 # 'hook_attn_out', but other than that, it looks like I had the right idea? (8
 # elements in the `all_hook_names` list, despite the text saying 10 ... but
 # then the function itself eventually outputs 10.)
+
+
+# We are instructed to "compute a (10, batch)-size tensor called
+# out_by_component_in_unbalanced_dir. The [i, j]th element of this tensor
+# should be the dot product of the ith component's output with the unbalanced
+# direction, for the jth sequence in your dataset."
+
+# `get_pre_final_ln_dir` gives us "the unbalanced direction"
+
+unbalanced_direction = get_pre_final_ln_dir(model, data)
+out_by_components = get_out_by_components(
+    model, data
+)  # (10, batch, seq_len, dimensionality)
+
+# I'm so retarded—all these weeks, and I still can't think in tensors. How would I do it with for loops?
+# Or am I just having trouble parsing the English of "for the jth sequence"?
+
+# for i in range(10):
+#     for j in range(len(batch)):
+#         [i][j] = out_by_components[i][j] @ unbalanced_direction
+
+# In terms of dimensions that drop out (for einsum purposes), I'm probably
+# going to want to say something like "component, batch, seq_len,
+# dimensionality -> component batch"?
+
+# Looking at the solution, I was on the wrong track: "they" (the immortal
+# "they") want you to pluck out the 0th sequence position `out_by_components[:,
+# :, 0, :]` (10, batch, dimensionality)
+
+# (Oh, there was also a fold-out hint.)
+
+out0 = out_by_components[..., 0, :]
+out_by_component_in_unbalanced_direction = out0 @ unbalanced_direction
+
+# And then we subtract the mean. `[:, data.isbal]` from the solutions is
+# selecting just the balanced rows.
+out_by_component_in_unbalanced_direction -= (
+    out_by_component_in_unbalanced_direction[:, data.isbal].mean(dim=1).unsqueeze(1)
+)
+
+# (And now that I've got my virtualenv/path stuff sorted out, I can call the
+# instructor's `plotly_utils`—which is not the PyPI package of the same
+# name—and see the graphs.)
+
+
+def is_balanced_vectorized_return_both(toks):
+    just_parens = torch.where(toks < 3, 0, toks)
+    group_deltas = torch.where(just_parens == 3, 1, just_parens)
+    group_deltas = torch.where(group_deltas == 4, -1, group_deltas)
+
+    # I also forgot about the right-to-left business.
+    group_deltas = group_deltas.flip(-1)
+
+    totals = group_deltas.sum(dim=-1)
+    cumulative = group_deltas.cumsum(dim=-1)
+
+    # Still so bad at tensor manipulation! This fails tests!!
+    # negative_failures = (cumulative < 0).any(dim=1)
+    # elevation_failures = totals != 0
+
+    # Instructor's version
+    elevation_failures = cumulative[:, -1] != 0
+    negative_failures = cumulative.max(-1).values > 0
+
+    return negative_failures, elevation_failures
+
+
+negative_failure, total_elevation_failure = is_balanced_vectorized_return_both(
+    data.toks
+)
+h20_in_unbalanced_dir = out_by_component_in_unbalanced_dir[7]
+h21_in_unbalanced_dir = out_by_component_in_unbalanced_dir[8]
+
+# We get a nice scatterplot. It seems like an algorithm for detecting total
+# elevation failures must live in Head 2.0, and one for detecting ever-negative
+# failures must live in Head 2.1?
+
+# It makes sense that "only-ever-negative" is rarer (sparser cloud of dots),
+# because it's more of a coincidence to have exactly equal numbers of
+# parentheses that just don't close each other.
+
+# TODO: continue ...
+
+def get_attn_probs(model, data, layer, head):
+    activations = get_activations(model, data.toks, ...)
+    pass
