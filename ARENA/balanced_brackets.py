@@ -160,6 +160,7 @@ from part7_balanced_bracket_classifier.solutions import (
     get_activations,
     LN_hook_names,
     get_out_by_components,
+    get_pre_20_dir,
 )
 from sklearn.linear_model import LinearRegression
 
@@ -316,8 +317,8 @@ def is_balanced_vectorized_return_both(toks):
 negative_failure, total_elevation_failure = is_balanced_vectorized_return_both(
     data.toks
 )
-h20_in_unbalanced_dir = out_by_component_in_unbalanced_dir[7]
-h21_in_unbalanced_dir = out_by_component_in_unbalanced_dir[8]
+h20_in_unbalanced_dir = out_by_component_in_unbalanced_direction[7]
+h21_in_unbalanced_dir = out_by_component_in_unbalanced_direction[8]
 
 # We get a nice scatterplot. It seems like an algorithm for detecting total
 # elevation failures must live in Head 2.0, and one for detecting ever-negative
@@ -327,8 +328,71 @@ h21_in_unbalanced_dir = out_by_component_in_unbalanced_dir[8]
 # because it's more of a coincidence to have exactly equal numbers of
 # parentheses that just don't close each other.
 
-# TODO: continue ...
+# We're supposed to write a function that extracts the attention patterns for a
+# given layer and head, but ... I don't see different heads in the activation
+# cache?
 
-def get_attn_probs(model, data, layer, head):
-    activations = get_activations(model, data.toks, ...)
-    pass
+# blocks.0.attn.hook_q torch.Size([2000, 42, 2, 28])
+# blocks.0.attn.hook_k torch.Size([2000, 42, 2, 28])
+# blocks.0.attn.hook_v torch.Size([2000, 42, 2, 28])
+# blocks.0.attn.hook_attn_scores torch.Size([2000, 2, 42, 42])
+# blocks.0.attn.hook_pattern torch.Size([2000, 2, 42, 42])
+# blocks.0.attn.hook_z torch.Size([2000, 42, 2, 28])
+# blocks.0.attn.hook_result torch.Size([2000, 42, 2, 56])
+# blocks.0.hook_attn_out torch.Size([2000, 42, 56])
+
+# Oh, I get it—the different heads are the second dimension.
+
+def get_attention_probabilities(model, data, layer, head):
+    attention_scores = get_activations(model, data.toks, "blocks.{}.attn.hook_pattern".format(layer))
+    return attention_scores[:, head, ...]
+
+# It turns out that in head 2.0, position 0 is mostly paying attention to
+# position 1, which means information about unbalancedness has already been
+# copied to position 1 from the previous layer. So now we're going to keep
+# digging backwards—
+
+def get_WOV(model, layer, head):
+    # return model.W_O[layer][head] @ model.W_V[layer][head]
+    # Despite the name, the instructor's solution has the multiplication in the
+    # other direction (which also helps the dimensional analysis later)
+    return model.W_V[layer][head] @ model.W_O[layer][head]
+
+# I'm not sure how to write this part ... we're told that it should be
+# conceptually similar to `get_pre_final_ln_dir` from above.
+
+# `get_pre_final_ln_dir` was finding a linear approximation to the layernorm,
+# and multiplying that by `get_post_final_ln_dir`, which in turn was
+# `model.W_U[:, 0] - model.W_U[:, 1]`, the difference in the ... classification
+# dimension?—in the unembedding matrix.
+
+# Dimensions aren't lining up on my first attempt: `fit` is 56×56, but
+# post-20-direction is 28.
+
+# def get_pre_20_direction(model, data):
+#     WOV = get_WOV(model, 2, 0)
+#     post_20_direction = WOV[:, 0] - WOV[:, 1]
+#     fitted, _score = get_ln_fit(model, data, layernorm=model.blocks[2].ln1, seq_pos=1)
+#     fit = torch.tensor(fitted.coef_).to(device)
+#     return fit.T @ post_20_direction
+
+# Instructor's solution was
+#
+# def get_pre_20_dir(model, data) -> Float[Tensor, "d_model"]:
+#     # SOLUTION
+#     W_OV = get_WOV(model, 2, 0)
+#     layer2_ln_fit, r2 = get_ln_fit(model, data, layernorm=model.blocks[2].ln1, seq_pos=1)
+#     layer2_ln_coefs = t.from_numpy(layer2_ln_fit.coef_).to(device)
+#     pre_final_ln_dir = get_pre_final_ln_dir(model, data)
+#     return layer2_ln_coefs.T @ W_OV @ pre_final_ln_dir
+
+
+# Next we're doing component magnitudes again. I get a dimension mismatch (10
+# vs. 7); a brief glance at the instructor's solution indicates that `:-3` is
+# in fact indicated. (It makes sense; the layers are in order.)
+
+out1 = out_by_components[:-3, :, 1, :]
+out_by_component_in_pre_20_unbalanced_direction = out1 @ get_pre_20_dir(model, data)
+out_by_component_in_pre_20_unbalanced_direction -= (
+    out_by_component_in_pre_20_unbalanced_direction[:, data.isbal].mean(dim=1).unsqueeze(1)
+)
