@@ -161,6 +161,7 @@ from part7_balanced_bracket_classifier.solutions import (
     LN_hook_names,
     get_out_by_components,
     get_pre_20_dir,
+    get_out_by_neuron,
 )
 from sklearn.linear_model import LinearRegression
 
@@ -396,3 +397,51 @@ out_by_component_in_pre_20_unbalanced_direction = out1 @ get_pre_20_dir(model, d
 out_by_component_in_pre_20_unbalanced_direction -= (
     out_by_component_in_pre_20_unbalanced_direction[:, data.isbal].mean(dim=1).unsqueeze(1)
 )
+
+
+# I'm very confused about what code I'm supposed to write for
+# `get_out_by_neuron`. We get pseudocode—that mentions f, for example. The
+# activation function? It was a GeLU in our demo transformer from last week—how
+# do I access it here? Or is the psuedocode "just conceptual" and I'm supposed
+# to be accessing an activation from the cache?
+
+# Instructor's solution—
+# W_out = model.W_out[layer] # [neuron d_model]
+# # Get activations of the layer just after the activation function, i.e. this is f(x.T @ W_in)
+# f_x_W_in = get_activations(model, data.toks, utils.get_act_name('post', layer)) # [batch seq neuron]
+# # f_x_W_in are activations, so they have batch and seq dimensions - this is where we index by seq if necessary
+# if seq is not None:
+# f_x_W_in = f_x_W_in[:, seq, :] # [batch neuron]
+# # Calculate the output by neuron (i.e. so summing over the `neurons` dimension gives the output of the MLP)
+# out = einops.einsum(
+#     f_x_W_in,
+#     W_out,
+#     "... neuron, neuron d_model -> ... neuron d_model",
+# )
+
+def get_out_by_neuron_in_20_direction(model, data, layer):
+    # instructor's solution clarifies that this is `get_pre_20_dir` (I was
+    # imagining it being the `out_by_component_in_pre_20_unbalanced_direction`
+    # that we computed above)
+    return get_out_by_neuron(model, data, layer, seq=1) @ get_pre_20_dir(model, data)
+
+
+def get_q_and_k_for_given_input(model, tokenizer, parens, layer):
+    hook_names = [key.format(layer) for key in ['blocks.{}.attn.hook_q', 'blocks.{}.attn.hook_k']]
+    cache = get_activations(model, tokenizer.tokenize(parens), hook_names)
+    return [cache[name].squeeze(0) for name in hook_names]
+
+# Next we learn about "activation patching"/"causal tracing" ...
+
+# The embedding vectors are being used to tally up the number of open and close parens!
+
+def embedding(model, tokenizer, char):
+    assert char in ("(", ")")
+    idx = tokenizer.t_to_i[char]
+    return model.W_E[idx]
+
+fitted, _score = get_ln_fit(model, data, layernorm=model.blocks[0].ln1)
+L = torch.tensor(fitted.coef_).to(device)
+v_L = embedding(model, tokenizer, "(").T @ L.T @ get_WOV(model, 0, 0)
+v_R = embedding(model, tokenizer, ")").T @ L.T @ get_WOV(model, 0, 0)
+print("Cosine similarity: ", torch.cosine_similarity(v_L, v_R, dim=0).item()) # −0.997
