@@ -1,3 +1,4 @@
+import math
 import random
 import sys
 from pathlib import Path
@@ -18,7 +19,6 @@ from plotly_utils import imshow
 MultiArmedBandit = solutions.MultiArmedBandit
 Agent = solutions.Agent
 
-
 max_episode_steps = 1000
 
 gym.envs.registration.register(
@@ -30,6 +30,7 @@ gym.envs.registration.register(
     kwargs={"num_arms": 10, "stationary": True},
 )
 
+env = gym.make("ArmedBanditTestbed-v0")
 
 class RandomAgent(Agent):
     def get_action(self):
@@ -40,21 +41,88 @@ class RandomAgent(Agent):
 
 
 class RewardAveragingAgent(Agent):
-        def __init__(self, num_arms, seed, ε, optimism):
-        self.epsilon = epsilon
+    def __init__(self, num_arms, seed, ε, optimism):
+        self.ε = ε
         self.optimism = optimism
         super().__init__(num_arms, seed)
 
-    # TODO
-
     def get_action(self):
-        pass
+        if random.random() < self.ε:
+            return random.randint(0, self.num_arms - 1)
+        else:
+            # neat argmax trick suggested by GPT-4
+            return max(range(self.num_arms), key=self.quality.__getitem__)
 
     def observe(self, action, reward, info):
-        pass
+        self.plays[action] += 1
+        self.quality[action] += (1/self.plays[action]) * (reward - self.quality[action])
 
-    def reset(self, seed: int):
-        pass
+    def reset(self, seed):
+        super().reset(seed)
+        self.plays = [0 for _ in range(num_arms)]
+        self.quality = [self.optimism for _ in range(num_arms)]
 
     def __repr__(self):
-        return "<RewardAveraging ε={}, optimism={}>".format(self.epsilon, self.optimism)
+        return "<RewardAveraging ε={}, optimism={}>".format(self.ε, self.optimism)
+
+
+class CheatingAgent(Agent):
+    def __init__(self, num_arms, seed):
+        super().__init__(num_arms, seed)
+        self.best_arm = 0
+
+    def get_action(self):
+        return self.best_arm
+
+    def observe(self, action, reward, info):
+        self.best_arm = info['best_arm']
+
+    def __repr__(self):
+        return "<Cheater>"
+
+
+class UpperConfidenceBoundActionSelectionAgent(Agent):
+    def __init__(self, num_arms, seed, c, ε=1e-6):
+        self.c = c
+        self.ε = ε
+        self.t = 0
+        super().__init__(num_arms, seed)
+
+    def get_action(self):
+        self.t += 1
+
+        # In order to avoid division by zero, anything we've never tried takes priority
+        if any(p == 0 for p in self.plays):
+            return min(range(self.num_arms), key=self.plays.__getitem__)
+        # Instructor's solution used the ε from the args list in the denominator
+
+        actions = [q + self.c * math.sqrt(math.log(self.t)/self.plays[i]) for i, q in enumerate(self.quality)]
+        return max(range(self.num_arms), key=actions.__getitem__)
+
+    def observe(self, action, reward, info):
+        self.plays[action] += 1
+        self.quality[action] += (1/self.plays[action]) * (reward - self.quality[action])
+
+    def reset(self, seed: int):
+        super().reset(seed)
+        self.plays = [0 for _ in range(num_arms)]
+        self.quality = [0 for _ in range(num_arms)]
+
+    def __repr__(self):
+        return "<UpperConfidenceBound(c={})>".format(self.c)
+
+
+Environment = solutions.Environment
+Toy = solutions.Toy
+Norvig = solutions.Norvig
+
+# Now we're going to solve the Bellman equation numerically.
+# V_π(s) is the value of following the policy π from state s.
+
+def policy_eval_numerical(env, π, γ=0.99, ε=1e-8, max_iterations=10_000):
+    previous_value = 0
+    value = 0
+    last_change = None
+    while last_change is not None and last_change > ε:
+        # TODO continue
+        ...
