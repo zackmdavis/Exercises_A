@@ -119,10 +119,13 @@ Norvig = solutions.Norvig
 # Now we're going to solve the Bellman equation numerically.
 # V_π(s) is the value of following the policy π from state s.
 
-def policy_eval_numerical(env, π, γ=0.99, ε=1e-8, max_iterations=10_000):
-    previous_value = 0
-    value = 0
-    last_change = None
-    while last_change is not None and last_change > ε:
-        # TODO continue
-        ...
+def numerical_policy_evaluation(env, π, γ=0.99, ε=1e-8, max_iterations=10_000):
+    previous_values = torch.tensor([0] * π.shape[0])
+    values = torch.tensor([0] * π.shape[0])
+    for i in range(max_iterations):
+        # The value of the policy for state s, V(s), is the sum over next
+        # states s′, Σ, of T(s′ | s, a) (R(s, a, s′) + γV(s′))
+        for s in range(len(π)):
+            for s_ in range(len(π)):
+                values[s] = env.T[s, s_, a] * (env.R[s, a, s_] + γ * previous_values[s_])
+        previous_values = values
