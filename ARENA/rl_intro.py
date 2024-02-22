@@ -3,6 +3,8 @@ import random
 import sys
 from pathlib import Path
 
+import torch
+
 import gym
 import numpy as np
 
@@ -119,13 +121,77 @@ Norvig = solutions.Norvig
 # Now we're going to solve the Bellman equation numerically.
 # V_π(s) is the value of following the policy π from state s.
 
-def numerical_policy_evaluation(env, π, γ=0.99, ε=1e-8, max_iterations=10_000):
-    previous_values = torch.tensor([0] * π.shape[0])
-    values = torch.tensor([0] * π.shape[0])
+def numerical_policy_evaluation(env, pi, gamma=0.99, eps=1e-8, max_iterations=10_000):
+    # instructor's test case uses their kwarg names
+    π = pi
+    γ = gamma
+    ε = eps
+
+    previous_values = torch.tensor([0.] * π.shape[0], dtype=torch.float64)
+    values = torch.tensor([0.] * π.shape[0], dtype=torch.float64)
     for i in range(max_iterations):
         # The value of the policy for state s, V(s), is the sum over next
         # states s′, Σ, of T(s′ | s, a) (R(s, a, s′) + γV(s′))
         for s in range(len(π)):
+            a = π[s]
+            sum_over_following = 0
             for s_ in range(len(π)):
-                values[s] = env.T[s, s_, a] * (env.R[s, a, s_] + γ * previous_values[s_])
-        previous_values = values
+                sum_over_following += env.T[s, a, s_] * (env.R[s, a, s_] + γ * previous_values[s_])
+            values[s] = sum_over_following
+
+        if (values - previous_values).abs().max().item() < ε:
+            break
+
+        previous_values = values.clone()
+
+    return values
+
+# I was distressed that my tests were failing, but GPT-4 pointed out a dumb
+# bug—that I need to `clone()` when assigning to `previous_values`—and the
+# tests pass.
+
+# Instructor's solution goes like—
+#
+# transition_matrix = env.T[states, actions, :]
+# reward_matrix = env.R[states, actions, :]
+# V = np.zeros_like(pi)
+# for i in range(max_iterations):
+#     V_new = einops.einsum(transition_matrix, reward_matrix + gamma * V, "s s_prime, s s_prime -> s")
+#     if np.abs(V - V_new).max() < eps:
+#         print(f"Converged in {i} steps.")
+#         return V_new
+#     V = V_new
+#
+# If I continue to find `einsum` inscrutable, that's a clue that I'm not cut
+# out for mechanistic interpretability!!
+
+
+# Next, Policy Evaluation (exact): rather than iteratively updating an
+# estimated policy value function, you can set up a system of equations to
+# solve it exactly.
+
+
+def exact_policy_evaluation(env, pi, gamma=0.99):
+    π = pi
+    γ = gamma
+
+    n = len(π)
+
+    # Once again, I natively think in `for`-loops, not tensor-manipulations; I
+    # can only pray that someday it'll click (the way that Rust eventually
+    # clicked)
+    P = torch.empty(n, n)
+    R = torch.empty(n, n)
+
+    for i in range(n):
+        for j in range(n):
+            # state → next-state transition matrix
+            P[i][j] = env.T[j, π[i], i]
+            # state → next-state reward matrix (actions chosen from π)
+            R[i][j] = env.R[i, π[i], j]
+    ...  # TODO finish!!
+
+
+# Remaining to finish the introduction—
+#  • Policy Improvement
+#  • Finding the Optimal Policy
