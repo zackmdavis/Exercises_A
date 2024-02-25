@@ -9,6 +9,7 @@ from torch import nn
 from torch import Tensor
 
 import gym
+import wandb
 import numpy as np
 
 exercises_dir = Path("/home/zmd/Code/ARENA_3.0/chapter2_rl/exercises/")
@@ -288,7 +289,7 @@ def epsilon_greedy_policy(envs, q_network, rng, obs, epsilon):
         return np.array(rng.integers(0, envs.single_action_space.n, envs.num_envs))
     else:
         q_logits = q_network(observation)
-        return q_logits.argmax(dim=1).numpy()  # thx GPT-4 for `argmax` syntax help
+        return q_logits.argmax(dim=1).cpu().numpy()  # thx GPT-4 for `argmax` syntax help
 
 # RL is so famously hard to debug that we get a strenuous recommendation to
 # learn to use simple "probe" environments.
@@ -297,3 +298,105 @@ def epsilon_greedy_policy(envs, q_network, rng, obs, epsilon):
 # figuring out why is going to be painful.
 
 # Our loss function is the expected squared temporal difference error.
+
+# I think "envs" is a batch dimension? That's the only way I can make sense of
+# earlier code with `rewards, dones, infos`, &c.
+
+DQNArgs = solutions.DQNArgs
+
+class DQNAgent:
+    def __init__(self, envs, args, rb, q_network, target_network, rng):
+        self.envs = envs
+        self.args = args
+        self.replay_buffer = rb
+        self.next_observations = self.envs.reset()
+        self.step = 0
+        # tests make assertions about `agent.epsilon`
+        self.ε = self.epsilon = args.start_e
+        self.q_network = q_network
+        self.target_network = target_network
+        self.rng = rng
+
+    def play_step(self):
+        observations = self.next_observations
+        actions = self.get_actions(observations)
+        next_observations, rewards, dones, infos = self.envs.step(actions)
+
+        premonitions = next_observations.copy()
+        for environment_no, done in enumerate(dones):
+            if done:
+                premonitions[environment_no] = infos[environment_no]['terminal_observation']
+
+        self.replay_buffer.add(observations, actions, rewards, dones, premonitions)
+
+        self.next_observations = next_observations
+        self.step += 1
+        return infos
+
+    def get_actions(self, observations):
+        self.ε = self.epsilon = linear_schedule(self.step, self.args.start_e, self.args.end_e, self.args.exploration_fraction, self.args.total_timesteps)
+        return epsilon_greedy_policy(self.envs, self.q_network, self.rng, observations, self.ε)
+
+
+# The target network is a lagged copy of the main Q-network, for stability.
+
+
+class DQNTrainer:
+    def __init__(self, args):  # course-provided
+        self.args = args
+        self.run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+        self.envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, self.run_name)])
+        self.start_time = time.time()
+        self.rng = np.random.default_rng(args.seed)
+
+	# Get obs & action shapes (we assume we're dealing with a single discrete action)
+        num_actions = self.envs.single_action_space.n
+        action_shape = ()
+        obs_shape = self.envs.single_observation_space.shape
+        num_observations = np.array(obs_shape, dtype=int).prod()
+
+        self.q_network = QNetwork(num_observations, num_actions).to(device)
+        self.target_network = QNetwork(num_observations, num_actions).to(device)
+        self.target_network.load_state_dict(self.q_network.state_dict())
+        self.optimizer = t.optim.Adam(self.q_network.parameters(), lr=args.learning_rate)
+
+        self.replay_buffer = ReplayBuffer(len(self.envs.envs), obs_shape, action_shape, args.buffer_size, args.seed)
+        self.agent = DQNAgent(self.envs, self.args, self.replay_buffer, self.q_network, self.target_network, self.rng)
+
+    def add_to_replay_buffer(self, n):
+        for _ in range(n):
+            self.agent.play_step()
+
+
+    def training_step(self):
+        sample = self.replay_buffer.sample(1, device)
+        # TODO continue ...
+
+    def train(self):  # course-provided
+        if self.args.use_wandb: wandb.init(
+            project=self.args.wandb_project_name,
+            entity=self.args.wandb_entity,
+            name=self.run_name,
+            monitor_gym=self.args.capture_video
+        )
+
+        print("Adding to buffer...")
+        self.add_to_replay_buffer(self.args.buffer_size)
+
+        progress_bar = tqdm(range(self.args.total_training_steps))
+        last_logged_time = time.time()
+
+        for step in progress_bar:
+
+            last_episode_len = self.add_to_replay_buffer(self.args.train_frequency)
+
+            if (last_episode_len is not None) and (time.time() - last_logged_time > 1):
+                progress_bar.set_description(f"Step = {self.agent.step}, Episodic return = {last_episode_len}")
+                last_logged_time = time.time()
+
+            self.training_step()
+
+        # Environments have to be closed before wandb.finish(), or else we get annoying errors 😠
+        self.envs.close()
+        if self.args.use_wandb:
+            wandb.finish()
