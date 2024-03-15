@@ -370,7 +370,29 @@ class DQNTrainer:
 
     def training_step(self):
         sample = self.replay_buffer.sample(1, device)
-        # TODO continue ...
+        # What are we doing here? The text says we want max_a Q(s_{t+1},a), but
+        # the QNetwork seems to map observation to action dimensionalities (in
+        # contrast to the two arguments in Q(s, a)).
+        #
+        # I guess, given an observation, it returns Q predictions for each
+        # action, and I take the max?
+        self.target_network.eval()
+        with torch.inference_mode():
+            action_values = self.target_network(sample.next_observations)
+
+        y = sample.rewards[0] + self.args.gamma * action_values.max()
+        temp
+
+
+
+        hope = self.target_network()
+
+        # Getting the max of the target network for the next observations,
+        # Getting the predicted Q-values from the Q-network,
+        # Using these to calculate the TD loss,
+        # Perform a gradient step on the TD loss,
+        # If self.agent.step % args.target_network_frequency == 0 then load the weights from the Q-network into the target network,
+
 
     def train(self):  # course-provided
         if self.args.use_wandb: wandb.init(
