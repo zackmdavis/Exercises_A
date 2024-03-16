@@ -1,12 +1,14 @@
 import math
 import random
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
 from torch import nn
 from torch import Tensor
+from tqdm import tqdm
 
 import gym
 import wandb
@@ -19,11 +21,17 @@ if str(exercises_dir) not in sys.path:
 
 from plotly_utils import line, cliffwalk_imshow, plot_cartpole_obs_and_dones
 
+from part1_intro_to_rl.utils import make_env
 import part2_q_learning_and_dqn.utils as utils
 import part2_q_learning_and_dqn.tests as tests
 import part2_q_learning_and_dqn.solutions as solutions
 
 from rl_intro import find_optimal_policy
+
+import warnings
+# indefinitely repeated Gym deprecation warnings are super-annoying
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -249,11 +257,11 @@ class ReplayBuffer:
             for _ in range(sample_size)
         ]
         return ReplayBufferSamples(
-            observations=torch.tensor(self.observations)[indices],
-            actions=torch.tensor(self.actions)[indices],
-            rewards=torch.tensor(self.rewards)[indices],
-            dones=torch.tensor(self.dones)[indices],
-            next_observations=torch.tensor(self.next_observations)[indices],
+            observations=torch.tensor(self.observations, device=device)[indices],
+            actions=torch.tensor(self.actions, device=device)[indices],
+            rewards=torch.tensor(self.rewards, device=device)[indices],
+            dones=torch.tensor(self.dones, device=device)[indices],
+            next_observations=torch.tensor(self.next_observations, device=device)[indices],
         )
 
 # Um, `test_replay_buffer_single` and `test_replay_buffer_wraparound` are
@@ -358,13 +366,15 @@ class DQNTrainer:
         self.q_network = QNetwork(num_observations, num_actions).to(device)
         self.target_network = QNetwork(num_observations, num_actions).to(device)
         self.target_network.load_state_dict(self.q_network.state_dict())
-        self.optimizer = t.optim.Adam(self.q_network.parameters(), lr=args.learning_rate)
+        self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=args.learning_rate)
 
         self.replay_buffer = ReplayBuffer(len(self.envs.envs), obs_shape, action_shape, args.buffer_size, args.seed)
         self.agent = DQNAgent(self.envs, self.args, self.replay_buffer, self.q_network, self.target_network, self.rng)
 
     def add_to_replay_buffer(self, n):
-        for _ in range(n):
+        for i in range(n):
+            if i != 0 and i % 200 == 0:
+                print("add-to-replay-buffer step {}".format(i))
             self.agent.play_step()
 
 
@@ -378,20 +388,17 @@ class DQNTrainer:
         # action, and I take the max?
         self.target_network.eval()
         with torch.inference_mode():
-            action_values = self.target_network(sample.next_observations)
+            action_values = self.target_network(sample.next_observations[0])
 
-        y = sample.rewards[0] + self.args.gamma * action_values.max()
-        temp
+        y = sample.rewards[0] + self.args.gamma * (1 - float(sample.dones[0])) * action_values.max()
+        temporal_diff = y - self.q_network(sample.observations[0])[sample.actions[0]]
+        loss = temporal_diff**2
+        loss.backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
 
-
-
-        hope = self.target_network()
-
-        # Getting the max of the target network for the next observations,
-        # Getting the predicted Q-values from the Q-network,
-        # Using these to calculate the TD loss,
-        # Perform a gradient step on the TD loss,
-        # If self.agent.step % args.target_network_frequency == 0 then load the weights from the Q-network into the target network,
+        if self.agent.step % args.target_network_frequency == 0:
+            self.target_network.load_state_dict(self.q_network.state_dict())
 
 
     def train(self):  # course-provided
@@ -422,3 +429,44 @@ class DQNTrainer:
         self.envs.close()
         if self.args.use_wandb:
             wandb.finish()
+
+
+# After filling in the `training_step` method, we are told to run the probe
+# environments first, then CartPole.
+
+# The probe environments need to be registered.
+gym.envs.registration.register(id="Probe1-v0", entry_point=solutions.Probe1)
+gym.envs.registration.register(id="Probe2-v0", entry_point=solutions.Probe2)
+gym.envs.registration.register(id="Probe3-v0", entry_point=solutions.Probe3)
+gym.envs.registration.register(id="Probe4-v0", entry_point=solutions.Probe4)
+gym.envs.registration.register(id="Probe5-v0", entry_point=solutions.Probe5)
+
+# We pass Probe1, but fail Probe2 on a shape mismatch (!)—or so I thought at
+# first. It turned out that I just had a copy–paste error in the registration
+# lines above clobbering the definition of Probe2. Actually, everything passes!!
+
+# After training completes ... I'm not sure what to do. Can I see the policy
+# play CartPole? (Maybe I shouldn't have skipped the wandb setup, which
+# included a video capture option.)
+
+# Claude has advice and sample code (for saving the weights and playing the game).
+
+# It works!
+
+def demo():
+    env = gym.make('CartPole-v1')
+    env.render_mode = 'human'
+    policy = QNetwork(4, 2)
+    policy.load_state_dict(torch.load('dqn_q_network.pth'))
+    policy.eval()
+    observation = env.reset()
+
+    done = False
+    while not done:
+        observation_tensor = torch.tensor(observation, dtype=torch.float32)
+        with torch.no_grad():
+            action = policy(observation_tensor).argmax().item()
+
+        observation, reward, done, info = env.step(action)
+        print(observation, reward, done, info)
+        env.render()
