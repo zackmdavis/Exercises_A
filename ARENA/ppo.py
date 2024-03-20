@@ -31,6 +31,7 @@ for idx, probe in enumerate([Probe1, Probe2, Probe3, Probe4, Probe5]):
     gym.envs.registration.register(id=f"Probe{idx+1}-v0", entry_point=probe)
 
 import warnings
+
 # indefinitely repeated Gym deprecation warnings are super-annoying
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -56,6 +57,7 @@ class Actor(nn.Module):
         layer_init(self.layers[2])
         layer_init(self.layers[4], std=0.01)
 
+
 class Critic(nn.Module):
     def __init__(self, num_observations):
         super().__init__()
@@ -74,6 +76,7 @@ class Critic(nn.Module):
 def get_actor_and_critic_classic(num_observations, num_actions):
     return Actor(num_observations, num_actions), Critic(num_observations)
 
+
 # We are asked: "what do you think is the benefit of using a small standard
 # deviation for the last actor layer?"
 #
@@ -88,14 +91,61 @@ def get_actor_and_critic_classic(num_observations, num_actions):
 # Andrychowicz et al. 2021 claiming that this is an important architectural
 # deet.
 
-@torch.inference_mode()
-def compute_advantages(next_value, next_done, rewards, values, dones, gamma, gae_lambda):
-    '''Compute advantages using Generalized Advantage Estimation.
-    next_value: shape (env,)
-    next_done: shape (env,)
-    rewards: shape (buffer_size, env)
-    values: shape (buffer_size, env)
-    dones: shape (buffer_size, env)
-    Return: shape (buffer_size, env)
-    '''
-    ...
+# I find the exposition of Generalized Advantage Estimation deeply confusing
+# and painful!! I'm trying to have Claude explain it to me ...
+
+compute_advantages = solutions.compute_advantages
+
+# I'm going to proceed, because spinning my wheels forever in the Generalized
+# Advantage Estimation mud isn't working. Next, we're building a replay memory,
+# which is not quite the same as the DQN replay buffer.
+
+# During rollout, we'll fill the buffer. During learning, we're going to learn
+# from the whole buffer (but shuffled). In addition to storing state, action,
+# and done, we'll be storing logprobs (action logits), advantages, and returns.
+
+
+def minibatch_indexes(rng, batch_size, minibatch_size):
+    assert batch_size % minibatch_size == 0
+    indices = list(range(batch_size))
+    random.shuffle(indices)
+    return [
+        np.array(indices[i * minibatch_size : (i + 1) * minibatch_size])
+        for i in range(batch_size // minibatch_size)
+    ]
+
+
+ReplayMinibatch = solutions.ReplayMinibatch
+ReplayMemory = solutions.ReplayMemory
+
+
+
+def play_step(self_):
+    observations = self.next_obs
+    dones = self.next_done
+
+    # get a distribution over actions
+    action_logits = self.actor(observations)
+    distribution = torch.distributions.categorical.Categorical(action_logits)
+    action = distribution.sample()
+
+    # TODO: continue/finish
+
+    # The `next_` vs. not asymmetry makes me nervous that I've misunderstood something
+    next_observations, rewards, next_dones, infos = self.envs.step()
+
+    # calculate logprobs and values
+
+    self.memory.add(observations, actions, logprobs, values, rewards, dones)
+
+    self.next_obs = torch.from_numpy(next_observations).to(device, dtype=t.float)
+    self.next_done = torch.from_numpy(next_dones).to(device, dtype=t.float)
+    self.step += self.envs.num_envs
+
+    return infos
+
+
+PPOAgent = solutions.PPOAgent
+PPOAgent.play_step = play_step
+
+tests.test_ppo_agent(PPOAgent)
