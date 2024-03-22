@@ -57,6 +57,9 @@ class Actor(nn.Module):
         layer_init(self.layers[2])
         layer_init(self.layers[4], std=0.01)
 
+    def forward(self, x):
+        return self.layers(x)
+
 
 class Critic(nn.Module):
     def __init__(self, num_observations):
@@ -71,6 +74,9 @@ class Critic(nn.Module):
         layer_init(self.layers[0])
         layer_init(self.layers[2])
         layer_init(self.layers[4], std=0.01)
+
+    def forward(self, x):
+        return self.layers(x)
 
 
 def get_actor_and_critic_classic(num_observations, num_actions):
@@ -119,28 +125,29 @@ ReplayMinibatch = solutions.ReplayMinibatch
 ReplayMemory = solutions.ReplayMemory
 
 
-
 def play_step(self_):
-    observations = self.next_obs
-    dones = self.next_done
+    observations = self_.next_obs
+    dones = self_.next_done
 
     # get a distribution over actions
-    action_logits = self.actor(observations)
-    distribution = torch.distributions.categorical.Categorical(action_logits)
-    action = distribution.sample()
+    values = self_.critic(observations).squeeze(-1)
+    action_logits = self_.actor(observations)
+    action_probabilities = torch.softmax(action_logits, dim=-1)
+    distribution = torch.distributions.categorical.Categorical(action_probabilities)
+    actions = distribution.sample()
+    logprobs = distribution.log_prob(actions)
 
-    # TODO: continue/finish
+    # The `next_` vs. not asymmetry makes me nervous that I've misunderstood
+    # something—but Claude's commentary seemed reässuring
+    next_observations, rewards, next_dones, infos = self_.envs.step(
+        actions.cpu().numpy()
+    )
 
-    # The `next_` vs. not asymmetry makes me nervous that I've misunderstood something
-    next_observations, rewards, next_dones, infos = self.envs.step()
+    self_.memory.add(observations, actions, logprobs, values, rewards, dones)
 
-    # calculate logprobs and values
-
-    self.memory.add(observations, actions, logprobs, values, rewards, dones)
-
-    self.next_obs = torch.from_numpy(next_observations).to(device, dtype=t.float)
-    self.next_done = torch.from_numpy(next_dones).to(device, dtype=t.float)
-    self.step += self.envs.num_envs
+    self_.next_obs = torch.from_numpy(next_observations).to(device, dtype=torch.float)
+    self_.next_done = torch.from_numpy(next_dones).to(device, dtype=torch.float)
+    self_.step += self_.envs.num_envs
 
     return infos
 
@@ -148,4 +155,34 @@ def play_step(self_):
 PPOAgent = solutions.PPOAgent
 PPOAgent.play_step = play_step
 
-tests.test_ppo_agent(PPOAgent)
+# That only specifies how our agent acts (taking the actor and critic nets as a
+# given) and stores memories. We need more code to learn from those memories.
+
+# Our PPO objective function will have three terms. First, the "clipped
+# surrogate objective", eq. 7 in the paper.
+
+
+def calc_clipped_surrogate_objective(
+    probs, mb_action, mb_advantages, mb_logprobs, clip_coef, eps=1e-8
+):
+    """Return the clipped surrogate objective, suitable for maximisation with gradient ascent.
+
+    probs:
+        a distribution containing the actor's unnormalized logits of shape (minibatch_size, num_actions)
+    mb_action:
+        what actions actions were taken in the sampled minibatch
+    mb_advantages:
+        advantages calculated from the sampled minibatch
+    mb_logprobs:
+        logprobs of the actions taken in the sampled minibatch (according to the old policy)
+    clip_coef:
+        amount of clipping, denoted by epsilon in Eq 7.
+    eps:
+        used to add to std dev of mb_advantages when normalizing (to avoid dividing by zero)
+    """
+    assert mb_action.shape == mb_advantages.shape == mb_logprobs.shape
+
+    pass
+
+
+tests.test_calc_clipped_surrogate_objective(calc_clipped_surrogate_objective)
