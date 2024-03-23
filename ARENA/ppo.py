@@ -161,28 +161,97 @@ PPOAgent.play_step = play_step
 # Our PPO objective function will have three terms. First, the "clipped
 # surrogate objective", eq. 7 in the paper.
 
+# The min and clip parts look straightforward, but I'm not sure how to
+# calculate r_t(θ) or A_t from the supplied arguments!
 
-def calc_clipped_surrogate_objective(
+# r_t(θ) is the ratio of π_θ(a_t | s_t) for the new and old policies. I guess
+# in terms of the arguments given, that would be `probs`/`mb_logprobs`? But
+# `probs` has the wrong shape: it has a `num_actions` dimension. So maybe we
+# need to index into it with the actual actions: `probs[mb_action]`?
+
+# But then there's another argument that the docstring says to add to the
+# standard deviation of `mb_advantages` to prevent division-by-zero when
+# normalizing ... but I'm not seeing where the advantages would get normalized?
+
+# Also, `probs[mb_action]` isn't legal (`Categorical` object not subscriptable)
+# ... but the underlying logits are a 3×4 tensor.
+
+# probs.logits[mb_action] is also 3×4 ... talking to Claude, it may be that I
+# want `gather`?
+
+# Now `clip` is failing because my `policy_ratio` is a tensor, not a float (the
+# way you would expect a ratio to be), and therefore cannot be compared to a bound.
+
+
+def calculate_clipped_surrogate_objective(
     probs, mb_action, mb_advantages, mb_logprobs, clip_coef, eps=1e-8
 ):
-    """Return the clipped surrogate objective, suitable for maximisation with gradient ascent.
-
-    probs:
-        a distribution containing the actor's unnormalized logits of shape (minibatch_size, num_actions)
-    mb_action:
-        what actions actions were taken in the sampled minibatch
-    mb_advantages:
-        advantages calculated from the sampled minibatch
-    mb_logprobs:
-        logprobs of the actions taken in the sampled minibatch (according to the old policy)
-    clip_coef:
-        amount of clipping, denoted by epsilon in Eq 7.
-    eps:
-        used to add to std dev of mb_advantages when normalizing (to avoid dividing by zero)
-    """
     assert mb_action.shape == mb_advantages.shape == mb_logprobs.shape
+    # new_policy_logits = probs.logits.gather(1, mb_action.unsqueeze(0))
+    # corrected—
+    new_policy_logits = probs.log_prob(mb_action)
+    # To get the ratio π_θ(a_t | s_t) / π_θ_old(a_t | s_t), we subtract the
+    # logits and exponentiate (to turn the difference into a quotient)
+    policy_ratio = torch.exp(new_policy_logits - mb_logprobs)
 
-    pass
+    # The notebook mentions in passing that we should normalize as in #7 of
+    # https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/
+    advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + eps)
+
+    unclipped = policy_ratio * advantages
+    # thanks to Claude for suggesting `.clamp` (I had written the obvious
+    # `clip` function, which doesn't work with tensors)
+    clipped = policy_ratio.clamp(1 - clip_coef, 1 + clip_coef) * advantages
+
+    # corrected: `minimum`, not `min`
+    surrogate_objective = torch.minimum(unclipped, clipped)
+
+    # average over the minibatch
+    return surrogate_objective.mean()
 
 
-tests.test_calc_clipped_surrogate_objective(calc_clipped_surrogate_objective)
+# After all that struggle to finally get code that makes sense ... it fails the
+# tests numerically. I think I've earned the right to peek at the instructor's
+# solution.
+
+# Instructor's version—
+#     logits_diff = probs.log_prob(mb_action) - mb_logprobs
+#     r_theta = t.exp(logits_diff)
+#     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + eps)
+#     non_clipped = r_theta * mb_advantages
+#     clipped = t.clip(r_theta, 1-clip_coef, 1+clip_coef) * mb_advantages
+#     return t.minimum(non_clipped, clipped).mean()
+
+# which looks pretty sim—oh. It turns out that `min` and `minimum` are not
+# aliases (as contrasted to `clip` and `clamp`) and the difference is critical.
+
+# But—wait. Under what circumstances are `torch.min(a, b)` and
+# `torch.minimum(a, b)` going to be different, exactly? And now the test is
+# failing again, even though I thought I saw it working with minimum?? Was the
+# problem actually with `gather`?
+
+# ... I'm going to move on. The clipped surrogate objective helps improve our
+# actor. A separate value term will help improve our critic.
+
+def calculate_value_function_loss(values, mb_returns, vf_coef):
+    assert values.shape == mb_returns.shape
+    return (vf_coef * (values - mb_returns)**2).mean()
+
+# ... that was much easier.
+
+# There's also an entropy bonus term, which incentivizes exploration.
+
+# We are asked: "in CartPole, what are the minimum and maximum values that
+# entropy can take? What behaviors correspond to each of these cases?"
+#
+# I reply: max entropy is pressing left and right with equal probability. (A
+# good policy would approach this because you're just as likely to be
+# unbalanced one way as the other, but a bad policy could just as well, by
+# randomizing rather than being sensitive to the pole.) Minimum entropy is
+# all-left or all-right, which will quickly fail.
+
+def calculate_entropy_bonus(probs, ent_coef):
+    return ent_coef * probs.entropy().mean()
+
+# Adam is already adaptive (ADAptive Momentum!), but we're separately going to
+# decay the learning rate.
