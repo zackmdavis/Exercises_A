@@ -1,3 +1,4 @@
+import itertools
 import math
 import random
 import sys
@@ -13,6 +14,7 @@ from tqdm import tqdm
 import gym
 import wandb
 import numpy as np
+from gym.envs.classic_control.cartpole import CartPoleEnv
 
 exercises_dir = Path("/home/zmd/Code/ARENA_3.0/chapter2_rl/exercises/")
 section_dir = exercises_dir / "part3_ppo"
@@ -188,8 +190,9 @@ def calculate_clipped_surrogate_objective(
 ):
     assert mb_action.shape == mb_advantages.shape == mb_logprobs.shape
     # new_policy_logits = probs.logits.gather(1, mb_action.unsqueeze(0))
-    # corrected—
-    new_policy_logits = probs.log_prob(mb_action)
+    # corrected?—
+    d = torch.distributions.categorical.Categorical(logits=probs)
+    new_policy_logits = d.log_prob(mb_action)
     # To get the ratio π_θ(a_t | s_t) / π_θ_old(a_t | s_t), we subtract the
     # logits and exponentiate (to turn the difference into a quotient)
     policy_ratio = torch.exp(new_policy_logits - mb_logprobs)
@@ -233,9 +236,11 @@ def calculate_clipped_surrogate_objective(
 # ... I'm going to move on. The clipped surrogate objective helps improve our
 # actor. A separate value term will help improve our critic.
 
+
 def calculate_value_function_loss(values, mb_returns, vf_coef):
-    assert values.shape == mb_returns.shape
-    return (vf_coef * (values - mb_returns)**2).mean()
+    assert values.shape == mb_returns.shape, "{} ≠ {}".format(values.shape, mb_returns.shape)
+    return (vf_coef * (values - mb_returns) ** 2).mean()
+
 
 # ... that was much easier.
 
@@ -250,8 +255,220 @@ def calculate_value_function_loss(values, mb_returns, vf_coef):
 # randomizing rather than being sensitive to the pole.) Minimum entropy is
 # all-left or all-right, which will quickly fail.
 
+
 def calculate_entropy_bonus(probs, ent_coef):
     return ent_coef * probs.entropy().mean()
 
+
 # Adam is already adaptive (ADAptive Momentum!), but we're separately going to
 # decay the learning rate.
+
+
+class PPOScheduler:
+    def __init__(self, optimizer, initial_lr, end_lr, total_training_steps):
+        self.optimizer = optimizer
+        self.initial_lr = initial_lr
+        self.end_lr = end_lr
+        self.total_training_steps = total_training_steps
+        self.n_step_calls = 0
+
+    def step(self):
+        self.n_step_calls += 1
+        decrement = (self.initial_lr - self.end_lr) / self.total_training_steps
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] -= decrement
+
+
+def make_optimizer(agent, total_training_steps, initial_lr, end_lr):
+    optimizer = torch.optim.Adam(agent.parameters(), lr=initial_lr, eps=1e-5, maximize=True)
+    scheduler = PPOScheduler(optimizer, initial_lr, end_lr, total_training_steps)
+    return optimizer, scheduler
+
+
+# And now we write the training loop's rollout and learning phases.
+
+
+class PPOTrainer:
+    def __init__(self, args):  # course-provided
+        set_global_seeds(args.seed)
+        self.args = args
+        self.run_name = (
+            f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+        )
+        self.envs = gym.vector.SyncVectorEnv(
+            [
+                make_env(
+                    args.env_id,
+                    args.seed + i,
+                    i,
+                    args.capture_video,
+                    self.run_name,
+                    args.mode,
+                )
+                for i in range(args.num_envs)
+            ]
+        )
+        self.agent = PPOAgent(self.args, self.envs).to(device)
+        self.optimizer, self.scheduler = make_optimizer(
+            self.agent, self.args.total_training_steps, self.args.learning_rate, 0.0
+        )
+
+    def rollout_phase(self):
+        for step in range(self.args.num_steps):
+            infos = self.agent.play_step()
+        return infos[0].get('episode', {}).get('episode_length', {})
+
+    def learning_phase(self):
+        minibatches = self.agent.get_minibatches()
+        for minibatch in minibatches:
+            objective = self.compute_ppo_objective(minibatch)
+            objective.backward()
+            # The instructor's notebook has the gradient-clipping bullet after
+            # the update bullet, but that doesn't make logical sense
+            nn.utils.clip_grad_norm_(
+                itertools.chain(
+                    self.agent.actor.parameters(), self.agent.critic.parameters()
+                ),
+                0.5,
+            )
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+            self.scheduler.step()
+
+    def compute_ppo_objective(self, minibatch):
+        # The clipped surrogate objective requires "probs" in addition to the
+        # args gotten from the minibatch—which presumably comes from the actor
+        # net that we're training—the minibatch data was kept in order to hit
+        # the net with a gradient
+        probs = self.agent.actor(minibatch.observations)
+        clipped_surrogate_objective = calculate_clipped_surrogate_objective(
+            probs,
+            minibatch.actions,
+            minibatch.advantages,
+            minibatch.logprobs,
+            clip_coef=0.2,
+        )
+
+        values = self.agent.critic(minibatch.observations).squeeze(1)
+        # Values come from the critic, but what are `returns`? Is that the same
+        # thing as `rewards`? No, the notebook says it's `advantages +
+        # values`—no, the minibatch does have precomputed `returns` defined on
+        # it.
+        value_function_loss = calculate_value_function_loss(
+            values, minibatch.returns, vf_coef=1
+        )
+        # XXX SUSPICIOUS: if we're converting a tensor to a distribution here,
+        # doesn't it seem likely that we should also do so for the surrogate
+        # objective?
+        d = torch.distributions.categorical.Categorical(logits=probs)
+        entropy_bonus = calculate_entropy_bonus(d, ent_coef=0.01)
+        # Negative loss because we're doing gradient ascent (maximizing
+        # negative loss is the same as minimizing loss)
+        return clipped_surrogate_objective - value_function_loss + entropy_bonus
+
+    def train(self):  # course-provided
+        if args.use_wandb:
+            wandb.init(
+                project=self.args.wandb_project_name,
+                entity=self.args.wandb_entity,
+                name=self.run_name,
+                monitor_gym=self.args.capture_video,
+            )
+
+        progress_bar = tqdm(range(self.args.total_phases))
+
+        for epoch in progress_bar:
+            last_episode_len = self.rollout_phase()
+            if last_episode_len is not None:
+                progress_bar.set_description(
+                    f"Epoch {epoch:02}, Episode length: {last_episode_len}"
+                )
+
+            self.learning_phase()
+
+        self.envs.close()
+        if self.args.use_wandb:
+            wandb.finish()
+
+
+# I'm skeptical I got that right on the first try—let's look at our probe environments.
+
+test_probe = solutions.test_probe
+
+# All five probe environments pass!!  But trying to train for real immediately
+# fails on a missing `range` in `rollout_phase`, which makes me question
+# exactly what the probe environments were testing? (But it calls `train` which
+# should call `rollout_phase` ...)
+#
+# There are several other "dumb" bugs like that (empty info dicts, `.log_prob`
+# is a method on `Categorical`, not `Tensor`, I accepted the course's `coef`
+# variable spelling and then spelled it `coeff` later because that's how I
+# would have written it, torch.Size([128, 1]) ≠ torch.Size([128]), &c. ), which
+# bodes ill for this endeavor
+
+# And different parts of the code disagree about whether to expect a
+# categorical distribution or a tensor ... 😰
+
+# It's training now, but I'm less confident about it training correctly.
+
+def cartpole_demo(policy=None, task="balance"):
+    match task:
+        case 'balance':
+            env_id = 'CartPole-v1'
+        case 'spin':
+            env_id = 'SpinCart-v0'
+
+    env = gym.make(env_id)
+    env.render_mode = 'human'
+
+    if policy is None:
+        policy = Actor(4, 2)
+        policy.load_state_dict(torch.load("ppo_cartpole_{}_actor.pth".format(task)))
+
+    policy.eval()
+
+    observation = env.reset()
+
+    done = False
+    while not done:
+        observation_tensor = torch.tensor(observation, dtype=torch.float32, device=device)
+        with torch.no_grad():
+            action = policy(observation_tensor).argmax().item()
+
+        observation, reward, done, info = env.step(action)
+        print(observation, reward, done, info)
+        env.render()
+
+# ... actually, it works!
+
+# There's an exercise to implement reward shaping to make the task easier to
+# learn, but below that, there's the suggestion of learning a "spin" policy
+# instead of a "balance" policy!
+
+class SpinCart(CartPoleEnv):
+    def step(self, action):
+        observation, reward, done, info = super().step(action)
+        x, v, theta, omega = observation
+
+        # reward angular velocity
+        reward = abs(omega) - 1.7 * abs(x)
+        # don't stop
+        done = False
+
+        return observation, reward, done, info
+
+gym.envs.registration.register(id="SpinCart-v0", entry_point=SpinCart, max_episode_steps=500)
+
+# If I just reward angular velocity, the cart goes off the screen. To make a
+# pretty demo, I also need to penalize x-displacement. (And since this is just a
+# cartpole policy and not a superintelligence, I do get to tweak the reward
+# function and try again.)
+#
+# ... and the displacement penalty was too small on the third attempt.
+# ... maybe we should also be taking the absolute value of angular velocity?
+
+# Should I do the Atari exercise, or was this enough to get a taste of what RL/PPO is like?
+
+# The human-playable play_breakout.py demo doesn't work for me. (I think an
+# earlier exercise required an older version of gym that only returned four
+# args from `env.step(action)`, but the Breakout implementation assumes a newer gym ...
