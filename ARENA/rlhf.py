@@ -19,6 +19,11 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # (The solutions are trying to import `eindex`, which doesn't work even after
 # `pip install`ing it, but there's an alternate implementation of the function
 # in question, so I should be fine to comment it out.)
+#
+# Mystery solved—library is written by the author and their page
+# https://www.perfectlynormal.co.uk/blog-eindex (linked later in the notebook)
+# recommends installing from Git.
+
 
 # So, how does the state–action–reward paradigm apply to language modeling?
 # The state is the sequence so far.
@@ -94,3 +99,60 @@ RLHFTrainingArgs = solutions.RLHFTrainingArgs
 
 # But for the language modeling setting, a_t just concatenates to the existing
 # sequence.
+
+
+@torch.no_grad()
+def compute_advantages(values, rewards, prefix_len):
+    batch_size, seq_len = values.shape
+    return (
+        torch.concat((values[:, prefix_len:seq_len-1], rewards.unsqueeze(1)), dim=1)
+        - values[:, prefix_len-1 : seq_len-1]
+    )
+
+
+ReplayMinibatch = solutions.ReplayMinibatch
+ReplayMemory = solutions.ReplayMemory
+
+# I ended up getting some help from Claude for this one, which is embarrassing
+# because it's simple and I should have been able to get it fully on my own. I
+# think I tripped over the instructor's comment about using `log_softmax` for
+# numerical stability. In the formula Σ P * log(P/Q), the latter actually has a
+# log in it for real, which is distinct from using exp(log_softmax(logit_p))
+# for numerical stability (when what you really want is P).
+
+# I think the slice is `prefix_len-1:-1` because the logits at the nth position
+# represent predictions about the n+1th token (so you want to start looking at
+# the position for the last token in the prefix, for predictions about what
+# comes after the prefix).
+
+def calculate_kl_penalty(logits, ref_logits, kl_coef, prefix_len):
+    # minibatch, seq_len, model_dimensionality
+    logit_p = logits[:, prefix_len-1:-1]
+    logit_q = ref_logits[:, prefix_len-1:-1]
+
+    log_p = torch.log_softmax(logit_p, dim=2)
+    log_q = torch.log_softmax(logit_q, dim=2)
+
+    p = torch.exp(log_p)
+
+    return kl_coef * (p * (log_p - log_q)).sum(dim=2).mean()
+
+def calculate_entropy_bonus(logits, ent_coef, prefix_len):
+    log_p = torch.log_softmax(logits[:, prefix_len-1:-1], dim=2)
+    p = torch.exp(log_p)
+    return -ent_coef * (p * log_p).sum(dim=2).mean()
+
+
+calculate_value_function_loss = solutions.calc_value_function_loss
+calculate_clipped_surrogate_objective = solutions.calc_clipped_surrogate_objective
+
+# Is it just me, or is it weird that we're still using the PPO clipped
+# surrogate objective in conjunction with the KL penalty here? (Because the
+# clipped surrogate is already supposed to be an easier-to-compute alternative
+# to a KL penalty in TRPO.)
+
+
+def get_logprobs(logits, tokens, prefix_len=1):
+    generated_tokens = tokens[:, prefix_len:]
+    logit_distribution = logits[:]
+    # TODO: finish
