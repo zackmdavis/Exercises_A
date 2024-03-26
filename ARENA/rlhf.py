@@ -151,8 +151,126 @@ calculate_clipped_surrogate_objective = solutions.calc_clipped_surrogate_objecti
 # clipped surrogate is already supposed to be an easier-to-compute alternative
 # to a KL penalty in TRPO.)
 
+# I still have this awful mental block where I just can't wrap my head around
+# tensor manipulations—even when I can describe the thing I want in English, I
+# don't know how to write it as PyTorch advanced indexes (let alone einsum),
+# even though I could do it as a list comprehension (because I have that
+# drilled and locked)
+#
+# What happens if I just write it as a list comprehension (or for loop) in
+# order to get unblocked?
+#
+# While looking at the test (not the solution), some info about the solution
+# leaked anyway because the solution was inline rather than imported—I was
+# treating logits as the answer, when it needs to be log-softmaxed
+
+# TODO (sometime?): use this as a case study for how to do index manipulations
+# correctly
 
 def get_logprobs(logits, tokens, prefix_len=1):
+    # The tests actually set `prexfix_len` to `None`!?
+    if prefix_len is None:
+        prefix_len = 1
+    batch_size, seq_len, vocab_size = logits.shape
+    gen_len = seq_len - prefix_len
+
     generated_tokens = tokens[:, prefix_len:]
-    logit_distribution = logits[:]
-    # TODO: finish
+    log_distribution = torch.log_softmax(logits, dim=-1)
+
+    result = [[None for j in range(gen_len)] for i in range(batch_size)]
+    for i in range(batch_size):
+        for j in range(gen_len):
+            result[i][j] = log_distribution[i][prefix_len-1+j][generated_tokens[i][j]]
+
+    return torch.tensor(result)
+
+# On to the optimizer/scheduler. The value head and base model get different learning rates.
+
+
+def get_optimizer(args, model):
+    parameter_groups = [
+        {'params': model.base_model.parameters(), 'lr': args.base_learning_rate},
+        {'params': model.value_head.parameters(), 'lr': args.head_learning_rate},
+    ]
+    return torch.optim.Adam(parameter_groups, maximize=True)
+
+get_lr_scheduler = solutions.get_lr_scheduler
+get_optimizer_and_scheduler = solutions.get_optimizer_and_scheduler
+
+# In addition to tapering down the learning rate later, there's also going to
+# be a "warmup" period to account for our initial gradients and adaptive
+# moments being large or unstable.
+
+# Now we write the trainer class ...
+
+class RLHFTrainer:
+    def __init__(self): # course-provided
+        torch.manual_seed(args.seed)
+        self.args = args
+        self.run_name = f"{args.exp_name}__{args.seed}__{int(time.time())}"
+        self.model = TransformerWithValueHead(args.base_model).to(device).train()
+        self.ref_model = TransformerWithValueHead(args.base_model).to(device).eval()
+        self.optimizer, self.scheduler = get_optimizer_and_scheduler(self.args, self.model)
+        self.prefix_len = len(self.model.base_model.to_str_tokens(self.args.prefix, prepend_bos=False))
+
+
+    def compute_rlhf_objective(self, minibatch):
+        '''
+        Computes the RLHF objective function to maximize, which equals the PPO objective function minus
+        the KL penalty term.
+
+        Steps of this function are:
+            - Get logits & values for the samples in minibatch
+            - Get the logprobs of the minibatch actions taken
+            - Use this data to compute all 4 terms of the RLHF objective function, and create function
+        '''
+
+        clipped_surrogate_objective = calculate_clipped_surrogate_objective(logprobs, mb_logprobs, mb_advantages, clip_coef)
+        value_function_loss = calculate_value_function_loss(values, mb_returns, vf_coef)
+        entropy_bonus = calculate_entropy_bonus(logits, ent_coef, prefix_len)
+        kl_penalty = calculate_kl_penalty(logits, ref_logits, kl_coef, prefix_len)
+        return clipped_surrogate_objective - value_function_loss + entropy_bonus - kl_penalty
+
+
+    def rollout_phase(self):
+        '''
+        Performs a single rollout phase, retyrning a ReplayMemory object containing the data generated
+        during this phase. Note that all forward passes here should be done in inference mode.
+
+        Steps of this function are:
+            - Generate samples from our model
+            - Get logits of those generated samples (from model & reference model)
+            - Get other data for memory (logprobs, normalized rewards, advantages)
+            - Return this data in a ReplayMemory object
+        '''
+        pass
+
+
+    def learning_phase(self, memory):
+        '''
+        Performs a learning step on `self.memory`. This involves the standard gradient descent steps
+        (i.e. zeroing gradient, computing objective function, doing backprop, stepping optimizer).
+
+        You should also remember the following:
+            - Clipping grad norm to the value given in `self.args.max_grad_norm`
+            - Incrementing `self.step` by 1 for each phase (not minibatch!)
+            - Stepping the scheduler (once per calling of this function)
+        '''
+        pass
+
+
+    def train(self): # course-provided
+        self.step = 0
+
+        if self.args.use_wandb: wandb.init(
+            project = self.args.wandb_project_name,
+            entity = self.args.wandb_entity,
+            name = self.run_name,
+            config = self.args,
+        )
+
+        for self.phase in range(self.args.total_phases):
+            memory = self.rollout_phase()
+            self.learning_phase(memory)
+
+        if self.args.use_wandb: wandb.finish()
