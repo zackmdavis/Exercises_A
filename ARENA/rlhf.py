@@ -4,6 +4,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
+from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
 exercises_dir = Path("/home/zmd/Code/ARENA_3.0/chapter2_rl/exercises/")
@@ -174,12 +175,14 @@ def get_logprobs(logits, tokens, prefix_len=1):
     # The tests actually set `prexfix_len` to `None`!?
     if prefix_len is None:
         prefix_len = 1
-    batch_size, seq_len, vocab_size = logits.shape
+
+    batch_size, seq_len = tokens.shape
     gen_len = seq_len - prefix_len
 
     generated_tokens = tokens[:, prefix_len:]
     log_distribution = torch.log_softmax(logits, dim=-1)
 
+    # import pudb; pudb.set_trace()
     result = [[None for j in range(gen_len)] for i in range(batch_size)]
     for i in range(batch_size):
         for j in range(gen_len):
@@ -239,10 +242,10 @@ reward_fn_char_count = solutions.reward_fn_char_count
 
 
 class RLHFTrainer:
-    def __init__(self):  # course-provided
+    def __init__(self, args):  # course-provided
         torch.manual_seed(args.seed)
         self.args = args
-        self.run_name = f"{args.exp_name}__{args.seed}__{int(time.time())}"
+        self.run_name = f"{args.exp_name}__{args.seed}"
         self.model = TransformerWithValueHead(args.base_model).to(device).train()
         self.ref_model = TransformerWithValueHead(args.base_model).to(device).eval()
         self.optimizer, self.scheduler = get_optimizer_and_scheduler(
@@ -253,22 +256,17 @@ class RLHFTrainer:
         )
 
     def compute_rlhf_objective(self, minibatch):
-        """
-        Computes the RLHF objective function to maximize, which equals the PPO objective function minus
-        the KL penalty term.
-
-        Steps of this function are:
-            - Get logits & values for the samples in minibatch
-            - Get the logprobs of the minibatch actions taken
-            - Use this data to compute all 4 terms of the RLHF objective function, and create function
-        """
+        self.model.train()
+        prefix_len = minibatch.sample_ids.shape[1] - minibatch.advantages.shape[1]
+        logits, values = self.model(self.model.base_model.tokenizer.batch_decode(minibatch.sample_ids))
+        logprobs = get_logprobs(logits, sample_ids, prefix_len=prefix_len)
 
         clipped_surrogate_objective = calculate_clipped_surrogate_objective(
-            logprobs, mb_logprobs, mb_advantages, clip_coef
+            logprobs, minibatch.logprobs, minibatch.advantages, self.args.clip_coef
         )
-        value_function_loss = calculate_value_function_loss(values, mb_returns, vf_coef)
-        entropy_bonus = calculate_entropy_bonus(logits, ent_coef, prefix_len)
-        kl_penalty = calculate_kl_penalty(logits, ref_logits, kl_coef, prefix_len)
+        value_function_loss = calculate_value_function_loss(values, minibatch.returns, self.args.vf_coef)
+        entropy_bonus = calculate_entropy_bonus(logits, self.args.ent_coef, prefix_len)
+        kl_penalty = calculate_kl_penalty(logits, minibatch.ref_logits, self.args.kl_coef, prefix_len)
         return (
             clipped_surrogate_objective
             - value_function_loss
@@ -279,7 +277,7 @@ class RLHFTrainer:
     def rollout_phase(self):
         sample_ids, samples = get_samples(
             self.model.base_model,
-            prompt=self.args.prompt,
+            prompt=self.args.prefix,
             batch_size=self.args.batch_size,
             gen_len=self.args.gen_len,
             temperature=self.args.temperature,
@@ -288,7 +286,7 @@ class RLHFTrainer:
         logits, values = self.model(samples)
         ref_logits = self.ref_model.base_model(samples)
 
-        _batch_size, seq_len, _vocab_size = logits.shape
+        _batch_size, seq_len = sample_ids.shape
         prefix_len = seq_len - self.args.gen_len
 
         logprobs = get_logprobs(logits, sample_ids, prefix_len=prefix_len)
@@ -311,16 +309,14 @@ class RLHFTrainer:
         )
 
     def learning_phase(self, memory):
-        """
-        Performs a learning step on `self.memory`. This involves the standard gradient descent steps
-        (i.e. zeroing gradient, computing objective function, doing backprop, stepping optimizer).
-
-        You should also remember the following:
-            - Clipping grad norm to the value given in `self.args.max_grad_norm`
-            - Incrementing `self.step` by 1 for each phase (not minibatch!)
-            - Stepping the scheduler (once per calling of this function)
-        """
-        pass
+        for minibatch in memory.get_minibatches():
+            objective = self.compute_rlhf_objective(minibatch)
+            objective.backward()
+            nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+        self.scheduler.step()
+        self.step += 1
 
     def train(self):  # course-provided
         self.step = 0
@@ -333,9 +329,57 @@ class RLHFTrainer:
                 config=self.args,
             )
 
-        for self.phase in range(self.args.total_phases):
+        for self.phase in tqdm(range(self.args.total_phases)):
             memory = self.rollout_phase()
             self.learning_phase(memory)
 
         if self.args.use_wandb:
             wandb.finish()
+
+# I may not have the hardware for this?
+
+# `OutOfMemoryError: CUDA out of memory. Tried to allocate 102.00 MiB. GPU 0
+# has a total capacity of 3.80 GiB of which 93.12 MiB is free. Including
+# non-PyTorch memory, this process has 3.70 GiB memory in use. Of the allocated
+# memory 3.55 GiB is allocated by PyTorch, and 62.26 MiB is reserved by PyTorch
+# but unallocated. If reserved but unallocated memory is large try setting
+# PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See
+# documentation for Memory Management
+# (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)`
+
+# The instructions say, "these exercises assume you're running on an A100 [...]
+# If you're running on a less powerful machine e.g. A10," whereas I have an RTX
+# 3050, which is even worse.
+
+# I think this merits peeking at the solution (if I can't trivially just run
+# the code first) ...
+
+# Actually, batch-size=4 might work?!—it's hitting an error in my code
+# ("IndexError: index 29 is out of bounds for dimension 0 with size 29") before
+# running out of memory
+
+# It does pass the tests, though?! ...
+
+# >>> gen_len
+# 30
+# >>> tokens.shape
+# torch.Size([4, 32])
+# >>> generated_tokens.shape
+# torch.Size([4, 29])
+# >>> prefix_len
+# 3
+
+# I think prefix_len == 3 is a lie; the actual prefix, "This is", tokenizes as
+# `['This', ' is']`.
+
+# It was calculated as `seq_len - self.args.gen_len`, where `seq_len` was the
+# second (1th) dimension of logits (33) ... but presumably it should actually
+# be the second (1th) dimension of `sample_ids` (32).
+
+# But apparenlty that wasn't the entire problem, because now we get
+# `IndexError: index 30 is out of bounds for dimension 0 with size 30`!!
+# ... but I had a similar `seq_len` calculation inside of `get_logprobs`.
+
+# The off-by-one propagates—
+# `RuntimeError: The size of tensor a (31) must match the size of tensor b (30)
+# at non-singleton dimension 1`
