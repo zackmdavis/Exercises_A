@@ -182,7 +182,6 @@ def get_logprobs(logits, tokens, prefix_len=1):
     generated_tokens = tokens[:, prefix_len:]
     log_distribution = torch.log_softmax(logits, dim=-1)
 
-    # import pudb; pudb.set_trace()
     result = [[None for j in range(gen_len)] for i in range(batch_size)]
     for i in range(batch_size):
         for j in range(gen_len):
@@ -257,16 +256,19 @@ class RLHFTrainer:
 
     def compute_rlhf_objective(self, minibatch):
         self.model.train()
-        prefix_len = minibatch.sample_ids.shape[1] - minibatch.advantages.shape[1]
         logits, values = self.model(self.model.base_model.tokenizer.batch_decode(minibatch.sample_ids))
-        logprobs = get_logprobs(logits, sample_ids, prefix_len=prefix_len)
+
+        # CORRECTION—instructor's solutions slice the values here
+        values = values[:, self.prefix_len-1:-1]
+
+        logprobs = get_logprobs(logits, minibatch.sample_ids, prefix_len=self.prefix_len)
 
         clipped_surrogate_objective = calculate_clipped_surrogate_objective(
             logprobs, minibatch.logprobs, minibatch.advantages, self.args.clip_coef
         )
         value_function_loss = calculate_value_function_loss(values, minibatch.returns, self.args.vf_coef)
-        entropy_bonus = calculate_entropy_bonus(logits, self.args.ent_coef, prefix_len)
-        kl_penalty = calculate_kl_penalty(logits, minibatch.ref_logits, self.args.kl_coef, prefix_len)
+        entropy_bonus = calculate_entropy_bonus(logits, self.args.ent_coef, self.prefix_len)
+        kl_penalty = calculate_kl_penalty(logits, minibatch.ref_logits, self.args.kl_coef, self.prefix_len)
         return (
             clipped_surrogate_objective
             - value_function_loss
@@ -284,6 +286,7 @@ class RLHFTrainer:
         )
         self.model.eval()
         logits, values = self.model(samples)
+
         ref_logits = self.ref_model.base_model(samples)
 
         _batch_size, seq_len = sample_ids.shape
@@ -383,3 +386,46 @@ class RLHFTrainer:
 # The off-by-one propagates—
 # `RuntimeError: The size of tensor a (31) must match the size of tensor b (30)
 # at non-singleton dimension 1`
+
+# And the fact that it's happening inside of the instructor's solutions code
+# means that I've passed it bad data ... but the relevant tensors, `advantages`
+# is coming from a function that passes tests, so am I passing _it_ bad data??
+
+# Probably not?
+
+# >>> values.shape
+# torch.Size([4, 33])
+# >>> rewards.shape
+# torch.Size([4])
+# >>> advantages.shape
+# torch.Size([4, 31])
+
+# This is a lousy situation to be in, and likely attributable to my
+# incompetence at tensor manipulations (that I struggled so much to write
+# `get_logprobs` with for-loops, and still got it wrong!)
+
+# The problem may not be with my implementation of advantages?
+#
+# >>> gold_advantages = solutions.compute_advantages(values, rewards, prefix_len)
+# >>> gold_advantages.shape
+# torch.Size([4, 31])
+# >>> advantages.shape
+# torch.Size([4, 31])
+
+# If it's not the LHS, the RHS implies that I'm saving the wrong `values` to
+# memory, but I'm pretty sure that's correct, because it's coming directly out
+# of my value head (which doesn't seem like tricky code). What is going on?!
+
+# Looking at the training loop solution ... I notice that we had `prefix_len`
+# defined for us on the class as
+# `len(self.model.base_model.to_str_tokens(self.args.prefix,
+# prepend_bos=False))`. Is that where the missing token is hiding?—no, that
+# doesn't seem to be it.
+
+# Oh—but the solution  also slices values rather than accepting  the raw output
+# of the value head!
+
+# ... which of course just leads to `RuntimeError: The size of tensor a (29)
+# must match the size of tensor b (30) at non-singleton dimension 1`. The
+# solution isn't even slicing `values` during rollout (I was looking at the
+# part of the solution about the objective).
