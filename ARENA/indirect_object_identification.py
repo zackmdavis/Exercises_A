@@ -27,6 +27,8 @@ from transformer_lens.hook_points import HookPoint
 from transformer_lens import utils, HookedTransformer, ActivationCache
 from transformer_lens.components import Embed, Unembed, LayerNorm, MLP
 
+from plotly_utils import imshow, line, scatter, bar
+
 import part3_indirect_object_identification.tests as tests
 import part3_indirect_object_identification.solutions as solutions
 
@@ -83,7 +85,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ... which passes the tests, but the fact that I wrote it that way is
 # shameful, disgusting.
 
-def logit_diff(logits, answer_tokens, per_prompt=False):
+# XXX—this is apparently wrong
+def my_attempted_logit_diff(logits, answer_tokens, per_prompt=False):
     # logits is (batch, seq, vocab_size)
     # answer_tokens is (batch, 2)
     a = torch.tensor([logits[:, -1][i][answer_tokens[:, 0][i]].item() for i in range(4)])
@@ -136,6 +139,52 @@ def logit_diff(logits, answer_tokens, per_prompt=False):
 # `model.tokens_to_residual_directions(0) == model.W_U[:, 0]` is a vector of
 # `True`s.
 
+# Now we're going to use the "logit lens" technique—looking at the residual
+# stream after each layer, and checking the logit diff predictions (what we
+# would output if the remaining layers were deleted and we just did the
+# enembedding here).
+
+def my_attempted_residual_stack_to_logit_diff(residual_stack, cache, logit_diff_directions):
+    stack = cache.apply_ln_to_stack(residual_stack, layer=-1, pos_slice=-1)
+    return stack.mul(logit_diff_directions).sum() / residual_stack.shape[0]
+
+# The test isn't passing here, and I don't think it's because of my einops
+# disability. (The einops version gives the same answer.) When I paste in the
+# instructor's version (equivalent by inspection), it does the same ... and I
+# don't even think I'm returning the right type!! (I'm giving a scalar, but
+# we're doing a layer plot next; it's supposed to return the average over the
+# batch, but not aggregate over the layers/components. And in fact, the
+# instructor's einsum expression does this, whole confusingly calling the layer
+# dimension "...".
+
+# Even running the instructor's code in the Colab notebook (before the
+# exercise) has the mismatch?!
+# Calculated average logit diff: 3.5518774986
+# Original logit difference:     3.2613105774
+# ------------------------------------------------------
+# AssertionError
+
+# I can't just shrug and say "Whatever" and keep going (and get lost) I need to
+# understand this—
+
+# Okay, I think the difference between 3.55 and 3.26 is a different issue from
+# the shape mismatch. When I use the instructor's `... batch d_model, batch
+# d_model -> ...` einops expression, I do get a graph that looks like the one
+# in the solutions (unlike the `.mul([...]).sum()` code).
+#
+# Or, it looks like it shape-wise; the actual figures don't match! Probably
+# scaling by the wrong amount?
+
+# The solutions notebook says that 3.55 is the correct value ... and that is
+# what the instructor's code verbatim says. So my `logit_diff` implementation
+# (with the list comprehensions) was also wrong despite passing tests?!
+
+# This is unacceptable, crazy—I have to make it make sense! And it shouldn't
+# take interminable hours of sidereal time!! There are two functions in
+# question! I have implementations from the instructor. I'm going to annotate
+# them with my own comments so it's very clear that I understand every line!
+# And then I'm going to continue with the notebook.
+
 prompt_format = [
     "When John and Mary went to the shops,{} gave the bag to",
     "When Tom and James went to the park,{} gave the ball to",
@@ -154,19 +203,33 @@ prompts = [
     for (prompt, names) in zip(prompt_format, name_pairs) for name in names[::-1]
 ]
 answers = [names[::i] for names in name_pairs for i in (1, -1)]
-answer_tokens = t.concat([
+answer_tokens = torch.concat([
     model.to_tokens(names, prepend_bos=False).T for names in answers
 ])
 
 tokens = model.to_tokens(prompts, prepend_bos=True).to(device)
 original_logits, cache = model.run_with_cache(tokens)
 
-original_average_logit_diff = logit_diff(original_logits, answer_tokens)
+# Instructor's solution, annotated with my explanation.
+def logit_diff(logits, answer_tokens, per_prompt = False):
+    # `logits` is (batch, seq_len, vocab_size): for every batch, and for every
+    # sequence position, we have a function of all the vocabulary tokens that
+    # becomes a probability distribution when you shove it through a softmax.
+    #
+    # Then we take the logits for just the last sequence position, to get (batch, vocab_size)
+    final_logits = logits[:, -1, :]
+    # Then we `gather` by the index of answer tokens—
+    # answer_logits[batch][answer] = final_logits[batch][answer_tokens[batch][answer]]
+    # which is (batch, 2)
+    answer_logits = final_logits.gather(dim=-1, index=answer_tokens)
+    # Unpack the correct and incorrect answers
+    correct_logits, incorrect_logits = answer_logits.unbind(dim=-1)
+    # And subtract.
+    answer_logit_diff = correct_logits - incorrect_logits
+    return answer_logit_diff if per_prompt else answer_logit_diff.mean()
 
-# Now we're going to use the "logit lens" technique—looking at the residual
-# stream after each layer, and checking the logit diff predictions (what we
-# would output if the remaining layers were deleted and we just did the
-# enembedding here).
+
+original_average_logit_diff = logit_diff(original_logits, answer_tokens)
 
 # `answer_tokens` is (8, 2): eight prompts, by two correct and incorrect tokens
 #
@@ -186,15 +249,25 @@ final_token_residual_stream = final_residual_stream[:, -1, :]
 # After correcting for LayerNorm weirdness.
 scaled_final_token_residual_stream = cache.apply_ln_to_stack(final_token_residual_stream, layer=-1, pos_slice=-1)
 
-def residual_stack_to_logit_diff(residual_stack, cache, logit_diff_directions):
-    stack = cache.apply_ln_to_stack(residual_stack, layer=-1, pos_slice=-1)
-    return stack.mul(logit_diff_directions).sum() / residual_stack.shape[0]
+# Claude is helping me rewrite the instructor's solution without einops. (This is
+# educational, because even with LLM assistance, to adapt it, I still have to
+# think about what the code is saying, what it means.)
 
-# The test isn't passing here, and I don't think it's because of my einops
-# disability. (The einops version gives the same answer.) When I paste in the
-# instructor's version (equivalent by inspection), it does the same ... and I
-# don't even think I'm returning the right type!! (I'm giving a scalar, but
-# we're doing a layer plot next; it's supposed to return the average over the
-# batch, but not aggregate over the layers/components. And in fact, the
-# instructor's einsum expression does this, whole confusingly calling the layer
-# dimension "...".
+def residual_stack_to_logit_diff(residual_stack, cache, logit_diff_directions):
+    num_layers, batch_size, d_model = residual_stack.shape
+    # unsqueeze in a singleton dimension
+    logit_diff_directions =  logit_diff_directions.unsqueeze(0).expand(num_layers, -1, -1)
+    scaled_residual_stack = cache.apply_ln_to_stack(residual_stack, layer=-1, pos_slice=-1)
+    return torch.bmm(scaled_residual_stack, logit_diff_directions).squeeze(-1).mean(dim=-1)
+
+# accumulated_residual, labels = cache.accumulated_resid(layer=-1, incl_mid=True, pos_slice=-1, return_labels=True)
+# logit_lens_logit_diffs = residual_stack_to_logit_diff(accumulated_residual, cache, logit_diff_directions)
+
+# line(
+#     logit_lens_logit_diffs,
+#     hovermode="x unified",
+#     title="Logit Difference From Accumulated Residual Stream",
+#     labels={"x": "Layer", "y": "Logit Diff"},
+#     xaxis_tickvals=labels,
+#     width=800
+# )
