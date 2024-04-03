@@ -253,21 +253,13 @@ scaled_final_token_residual_stream = cache.apply_ln_to_stack(final_token_residua
 # educational, because even with LLM assistance, to adapt it, I still have to
 # think about what the code is saying, what it means.)
 
-def residual_stack_to_logit_diff(residual_stack, cache, logit_diff_directions):
-    num_layers, batch_size, d_model = residual_stack.shape
-    # unsqueeze in a singleton dimension
-    logit_diff_directions =  logit_diff_directions.unsqueeze(0).expand(num_layers, -1, -1)
-    scaled_residual_stack = cache.apply_ln_to_stack(residual_stack, layer=-1, pos_slice=-1)
-    return torch.bmm(scaled_residual_stack, logit_diff_directions).squeeze(-1).mean(dim=-1)
+# It turns out that the ellipsis is actually significant in einsum (for a
+# variable number of dimensions, possibly zero); it's not just a quirky naming
+# choice.
 
-# accumulated_residual, labels = cache.accumulated_resid(layer=-1, incl_mid=True, pos_slice=-1, return_labels=True)
-# logit_lens_logit_diffs = residual_stack_to_logit_diff(accumulated_residual, cache, logit_diff_directions)
-
-# line(
-#     logit_lens_logit_diffs,
-#     hovermode="x unified",
-#     title="Logit Difference From Accumulated Residual Stream",
-#     labels={"x": "Layer", "y": "Logit Diff"},
-#     xaxis_tickvals=labels,
-#     width=800
-# )
+# I'm in this absurd situation where the einsum code works, but I don't want to
+# just accept that and move on; I want to ensure that I understand I know what
+# it's doing, as proven by having plain linear-algebra operations that do the
+# same thing, and neither me nor Claude can figure it out. I need to go back to
+# basics and re-review the Ch. 0 stuff rather than delusionally assuming I
+# could get by without it.
