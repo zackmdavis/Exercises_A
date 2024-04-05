@@ -87,3 +87,14 @@ b = torch.tensor([[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]])
 
 # Free indices range over the output, and guide the computation of every
 # element of it.
+
+# I might not actually want to allocate time to see it through, but it's
+# tempting to try to dash off a quick implementation of the for-loop expansion
+# as a Rust macro, to prove that I really understand it.
+
+# As a simplifying assumption, assume there are just two tensors. It seems like
+# the obvious game plan is to use an ordinary Rust function to parse the arrow
+# expression, then only use macros for the for-loop expansion.
+
+# Or—you know, there's probably a more flexible way to express the computation
+# expressed by a dynamic number of nested for loops.
