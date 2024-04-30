@@ -263,3 +263,54 @@ scaled_final_token_residual_stream = cache.apply_ln_to_stack(final_token_residua
 # same thing, and neither me nor Claude can figure it out. I need to go back to
 # basics and re-review the Ch. 0 stuff rather than delusionally assuming I
 # could get by without it.
+
+# ------
+
+# I got sidetracked from this for a while, but one of the things I did while
+# being sidetracked was in fact implementing `einsum` in Rust
+# (https://github.com/zackmdavis/meinsum), which will hopefully help with that
+# being a blocker? Where was I??
+
+# Let's review our story so far: we want to understand how the model knows
+# which name to predict in prompts like "When John and Jane went to the park,
+# John gave the ball to". This is quantified as the difference in the logits
+# for ` John` and ` Jane` (where logits are the model outputs that you shove
+# through a softmax to get a probability distribution).
+
+# And that difference amounts to ... the dot product of the residual steam with
+# a particular direction?
+
+# The unembedding matrix has shape (dimensionality, vocab_size).
+# The residual stream vector has shape (batch, sequence, dimensionality).
+
+# If we ignore the batch direction and just take the residual stream at a
+# particular position, that's a vector of shape (dimensionality,).
+
+# The prediction for that sequence position comes from multiplying that vector
+# by the unembedding matrix (on the left with a transpose).
+
+# x^T · W_U is (1 × dimensionality) · (dimensionality × vocab_size) = (1 × vocab_size).
+
+# Instructor's solution
+def residual_stack_to_logit_diff(residual_stack, cache, logit_diff_directions=logit_diff_directions):
+    batch_size = residual_stack.size(-2)
+    scaled_residual_stack = cache.apply_ln_to_stack(residual_stack, layer=-1, pos_slice=-1)
+    return einops.einsum(
+        scaled_residual_stack, logit_diff_directions,
+        "... batch d_model, batch d_model -> ..."
+    ) / batch_size
+
+
+# Basically, for every layer of our transformer, we can look at the residual
+# stream, and see the logit difference "if the network ended there". As it
+# happens, performance on this this task "if the network ended there" only
+# perks up around layer 9, so there's probably a relevant circuit there?
+
+# You can do this at the level of transformer blocks or more specifically
+# MLP/attention layers.
+
+# Attention heads move information between residual stream positions, which may
+# not correspond to what token is at that position.
+
+# So, that was "logit attribution". Another technique is "activation patching",
+# introduced by Bau and Meng (of ROME fame) as "causal tracing".
