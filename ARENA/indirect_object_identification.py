@@ -314,3 +314,96 @@ def residual_stack_to_logit_diff(residual_stack, cache, logit_diff_directions=lo
 
 # So, that was "logit attribution". Another technique is "activation patching",
 # introduced by Bau and Meng (of ROME fame) as "causal tracing".
+
+# We run the model with a "good" input and record the activations. Then we run
+# the model with a corrupted input, but patch in the activation from the
+# "clean" run. If patching increases the logit on the correct answer, we infer
+# that that activation was important.
+
+# "Noising tells you what is necessary; denoising tells you what is sufficient."
+
+# Noising vs. denoising: correcting a corrupted input (showing that a part is
+# sufficient for the task) is a bigger deal than breaking a correct input
+# (because removing a part doesn't mean that part was task-specific).
+
+# Uh, the instructor's code for corrupting the prompt makes no sense to me. I
+# thought we were just changing the second mention of the subject ... oh, I
+# see. The original prompts do it with one subject, then the other, and we're
+# just switching the order in the list of "corrupted" prompts.
+
+clean_tokens = tokens
+indices = [i+1 if i % 2 == 0 else i-1 for i in range(len(tokens))]
+corrupted_tokens = clean_tokens[indices]
+
+print(
+    "Clean string 0:    ", model.to_string(clean_tokens[0]), "\n"
+    "Corrupted string 0:", model.to_string(corrupted_tokens[0])
+)
+
+clean_logits, clean_cache = model.run_with_cache(clean_tokens)
+corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
+
+clean_logit_diff = logit_diff(clean_logits, answer_tokens)
+print(f"Clean logit diff: {clean_logit_diff:.4f}")
+
+corrupted_logit_diff = logit_diff(corrupted_logits, answer_tokens)
+print(f"Corrupted logit diff: {corrupted_logit_diff:.4f}")
+
+
+# We define a metric from logits to the unit interval (approximately; it could
+# go above one if we improve over the baseline perf).
+
+# So, to linearize this, we'd—subtract off the corrupted baseline, and divide
+# by the clean-corrupted metadiff? Is that right?
+
+def ioi_metric(
+    logits, # (batch, seq, vocab_size)
+    answer_tokens=answer_tokens, # (batch, 2)
+    corrupted_logit_diff=corrupted_logit_diff,
+    clean_logit_diff=clean_logit_diff,
+):
+    diff = logit_diff(logits, answer_tokens)
+    return (diff - corrupted_logit_diff) / (clean_logit_diff - corrupted_logit_diff)
+
+
+# We're given some code to use TransformerLens's `patching` module to plot before writing our own.
+
+# What makes this feel so hard and confusing when the docstring tells us what
+# the function should do? "Patches the given seqeuence position in the residual
+# stream, using the value from the clean cache." Well, we have the stream, the
+# position, and the cache, what's the problem? How do we know which value to
+# pull from the cache, if `corrupted_residual_component` is just a tensor?
+# Probably the hook has the name attached?
+
+# So we're replacing the corrupted activation with the clean one at just one
+# sequence position? How do I express that—is it another `gather`? Why can't I
+# keep this straight in my head?
+
+def patch_residual_component(
+    corrupted_residual_component, # (batch, seq, dimensionality)
+    hook,
+    pos,
+    clean_cache
+): # (batch, seq, dimensionality)
+    # like this?
+    return_component = corrupted_residual_component.clone()
+    clean_component = clean_cache[hook.name]
+    return_component[:, pos, :] = clean_component[:, pos, :]
+    # ✓ instructor's solution is similar
+    return return_component
+
+# (I'm looking at the instructor's solution for `get_act_patch_resid_pre`—they
+# actually use a `for` loop to fill in a `torch.zeros`!)
+
+# We can also patch after the attention layer or MLP.
+
+# The MLP is mostly relevant at layer 0, position 10. (Where it gets the
+# identity of the token at that position?) The attention makes things worse at
+# the very end.
+
+# The instructor thinks MLP 0 is acting as an extension of the embedding, and
+# is not really important to this task.
+
+# TODO: `act_patch_block_every` is "similar enough to the previous exercise
+# that doing this isn't compulsory", but since I skipped the previous, I
+# definitely need to do this (tomorrow).
