@@ -1,6 +1,6 @@
-import random
+import itertools
 import math
-
+import random
 
 class Value:
     def __init__(self, value, _children=(), _operation='', label=''):
@@ -177,8 +177,13 @@ class Neuron:
     def __call__(self, x):
         # w * x + b
         activation = sum(wi*xi for wi, xi in zip(self.weights, x)) + self.bias
-        out = activation.relu()
+        # I had swapped in ReLU here because it felt more grown-up, but for
+        # education/debugging, I don't want half of the gradients to be zero
+        out = activation.tanh()
         return out
+
+    def parameters(self):
+        return self.weights + [self.bias]
 
 # x = [2.0, 3.0]
 # n = Neuron(2)
@@ -194,6 +199,10 @@ class Layer:
         outs = [n(x) for n in self.neurons]
         return outs
 
+    def parameters(self):
+        return list(itertools.chain.from_iterable(n.parameters() for n in self.neurons))
+
+
 # n = Layer(2, 3)
 # print(n(x))
 
@@ -206,6 +215,9 @@ class MultiLayerPerceptron:
         for layer in self.layers:
             x = layer(x)
         return x
+
+    def parameters(self):
+        return list(itertools.chain.from_iterable(l.parameters() for l in self.layers))
 
 n = MultiLayerPerceptron(3, [4, 4, 1])
 
@@ -236,3 +248,7 @@ losses = [(y_true - y_out)**2 for y_true, y_out in zip(ys, ys_hat)]
 # But the code I have now does seem to match
 # https://github.com/karpathy/micrograd/blob/c911406e5ace8742e5841a7e0df113ecb5d54685/micrograd/engine.py#L54-L70
 # ?
+
+# After swapping out ReLU for tanh, it looks like I am getting gradients? Was I
+# deceived by an "unlucky" negative actication at the single output neuron
+# resulting in no gradients?
